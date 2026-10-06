@@ -21,16 +21,21 @@ app.use(cors());
 app.use(express.json({ limit: '20mb' }));
 app.use(express.urlencoded({ extended: true, limit: '20mb' }));
 
-const frontendDir = path.resolve('frontend');
+const publicDir = fs.existsSync(path.resolve('public'))
+  ? path.resolve('public')
+  : path.resolve('frontend');
 const dataDir = path.resolve('data');
 const uploadsDir = path.resolve(dataDir, 'uploads');
 
 if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
 if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
 
-// Serve static frontend assets
-app.use('/static', express.static(frontendDir));
-app.use(express.static(frontendDir));
+// Serve static frontend assets from public/ (and fallback frontend/)
+app.use(express.static(publicDir));
+app.use('/static', express.static(publicDir));
+if (fs.existsSync(path.resolve('frontend'))) {
+  app.use('/static', express.static(path.resolve('frontend')));
+}
 
 // Curated medical terminology glossary for non-medical users
 export const MEDICAL_GLOSSARY: Record<string, string> = {
@@ -1044,7 +1049,7 @@ function withDisclaimer(payload: Record<string, any>): Record<string, any> {
 
 // API Routes
 app.get('/', (_req: Request, res: Response) => {
-  res.sendFile(path.join(frontendDir, 'index.html'));
+  res.sendFile(path.join(publicDir, 'index.html'));
 });
 
 app.get('/api/health', (_req: Request, res: Response) => {
@@ -1353,6 +1358,18 @@ app.post('/api/patient-education', async (req: Request, res: Response) => {
   }
 });
 
-app.listen(PORT, HOST, () => {
-  console.log(`[MedAssist AI] Server running at http://${HOST}:${PORT}`);
-});
+import { fileURLToPath } from 'url';
+
+const isMainModule = Boolean(
+  process.argv[1] &&
+  fileURLToPath(import.meta.url) === path.resolve(process.argv[1])
+);
+
+if (!process.env.VERCEL && (isMainModule || process.env.npm_lifecycle_event === 'dev')) {
+  app.listen(PORT, HOST, () => {
+    console.log(`[MedAssist AI] Server running at http://${HOST}:${PORT}`);
+  });
+}
+
+export default app;
+export { app };
