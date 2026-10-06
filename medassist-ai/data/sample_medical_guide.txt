@@ -1,0 +1,32 @@
+MedAssist Synthetic Clinical Guide
+This document is synthetic educational content created for software testing.
+It is not a real clinical guideline and must not be used for patient care.
+
+Section: Blood pressure
+For this synthetic guide, an adult blood pressure reading contains systolic and
+diastolic values in mmHg. Repeated elevated readings should be reviewed in
+clinical context. A single home reading is not enough to establish a diagnosis.
+Common documentation fields include date, time, position, cuff/site, systolic,
+diastolic, pulse, symptoms, and relevant medication context.
+
+Section: Medication reconciliation
+A medication reconciliation note should record the medication name, strength,
+route, frequency, indication when known, adherence concerns, allergies, and
+whether the list was verified against an available source. Uncertainty should
+be explicitly marked instead of silently filling missing information.
+
+Section: Hydration education
+For this synthetic example, patient education about hydration should use plain
+language, avoid promises, and encourage the person to follow the fluid advice
+given by their healthcare professional. Education should mention that needs vary
+with activity, environment, age, and medical conditions.
+
+Section: Red-flag escalation
+Educational drafts should not diagnose. If a person reports severe or rapidly
+worsening symptoms, the software should advise seeking urgent professional
+assessment rather than attempting to determine a diagnosis from the text.
+
+Section: Documentation quality
+A structured clinical draft should separate reported facts, observations,
+assessment statements supplied by the author, and follow-up plans. Missing
+information should be labeled "not provided" rather than invented.

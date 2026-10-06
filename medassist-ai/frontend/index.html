@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>MedAssist AI — Academic RAG Prototype</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body class="min-h-screen bg-slate-950 text-slate-100">
+  <header class="border-b border-slate-800 bg-slate-950/90 backdrop-blur">
+    <div class="mx-auto max-w-7xl px-4 py-5">
+      <div class="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+        <div>
+          <div class="flex items-center gap-3">
+            <div class="brand-mark">M</div>
+            <div>
+              <h1 class="text-2xl font-bold tracking-tight">MedAssist AI</h1>
+              <p class="text-sm text-slate-400">Academic RAG prototype for healthcare documentation</p>
+            </div>
+          </div>
+        </div>
+        <div id="healthBadge" class="status-badge">Checking API…</div>
+      </div>
+    </div>
+  </header>
+
+  <main class="mx-auto max-w-7xl px-4 py-6">
+    <div class="disclaimer mb-6">
+      <strong>Safety notice</strong>
+      <span>DISCLAIMER: MedAssist AI is an academic prototype for reference only, not certified for diagnosis or treatment. All outputs must be validated by a licensed healthcare professional.</span>
+    </div>
+
+    <nav class="tabs" aria-label="MedAssist modules">
+      <button class="tab active" data-tab="knowledge">Knowledge Base</button>
+      <button class="tab" data-tab="qa">Medical Q&A</button>
+      <button class="tab" data-tab="notes">Summarizer & Notes</button>
+      <button class="tab" data-tab="education">Patient Education</button>
+    </nav>
+
+    <section id="knowledge" class="panel active">
+      <div class="grid gap-6 lg:grid-cols-[1.1fr_.9fr]">
+        <div class="card">
+          <h2 class="section-title">Knowledge Base Manager</h2>
+          <p class="muted mb-5">Upload a synthetic guide or your academic reference PDF. Files are parsed, chunked at 800 characters with 100-character overlap, and indexed into local ChromaDB.</p>
+          <label id="dropZone" class="drop-zone">
+            <input id="fileInput" type="file" accept=".pdf,.txt,.md" class="hidden">
+            <div class="text-4xl mb-3">⇧</div>
+            <div class="font-semibold">Drop a PDF here</div>
+            <div class="text-sm text-slate-400 mt-1">or click to choose a PDF, TXT, or MD file</div>
+          </label>
+          <div id="uploadStatus" class="mt-4 text-sm text-slate-400"></div>
+        </div>
+        <div class="card">
+          <h2 class="section-title">How it works</h2>
+          <ol class="space-y-4 text-sm text-slate-300">
+            <li><span class="step">1</span> Extract text with PyMuPDF.</li>
+            <li><span class="step">2</span> Split content into overlapping chunks.</li>
+            <li><span class="step">3</span> Create local sentence-transformer embeddings.</li>
+            <li><span class="step">4</span> Store vectors in persistent ChromaDB.</li>
+            <li><span class="step">5</span> Retrieve relevant passages for each question.</li>
+          </ol>
+        </div>
+      </div>
+    </section>
+
+    <section id="qa" class="panel">
+      <div class="card">
+        <div class="flex items-center justify-between gap-4 mb-4">
+          <div>
+            <h2 class="section-title mb-1">Grounded Medical Q&A</h2>
+            <p class="muted">Answers are generated from retrieved reference passages.</p>
+          </div>
+          <span class="pill">RAG</span>
+        </div>
+        <div id="chatWindow" class="chat-window mb-4">
+          <div class="chat assistant">Upload the synthetic guide, then ask a documentation question.</div>
+        </div>
+        <div class="flex flex-col md:flex-row gap-3">
+          <input id="questionInput" class="input flex-1" placeholder="e.g. What should be recorded for a blood pressure reading?">
+          <button id="askButton" class="btn">Ask MedAssist</button>
+        </div>
+      </div>
+    </section>
+
+    <section id="notes" class="panel">
+      <div class="grid gap-6 lg:grid-cols-2">
+        <div class="card">
+          <h2 class="section-title">Document Summarizer</h2>
+          <textarea id="summaryInput" class="textarea" placeholder="Paste rough report text here…"></textarea>
+          <button id="summaryButton" class="btn mt-3">Create Summary</button>
+          <pre id="summaryOutput" class="output"></pre>
+        </div>
+        <div class="card">
+          <h2 class="section-title">Clinical Note Structurer</h2>
+          <textarea id="noteInput" class="textarea" placeholder="Paste rough clinical notes here…"></textarea>
+          <button id="noteButton" class="btn mt-3">Structure Note</button>
+          <pre id="noteOutput" class="output"></pre>
+        </div>
+      </div>
+    </section>
+
+    <section id="education" class="panel">
+      <div class="card max-w-4xl">
+        <h2 class="section-title">Patient Education Drafter</h2>
+        <p class="muted mb-4">Convert technical source text into a plain-language educational draft without adding unsupported treatment advice.</p>
+        <textarea id="educationInput" class="textarea" placeholder="Paste technical healthcare text here…"></textarea>
+        <button id="educationButton" class="btn mt-3">Draft Plain Language</button>
+        <pre id="educationOutput" class="output"></pre>
+      </div>
+    </section>
+  </main>
+
+  <footer class="mx-auto max-w-7xl px-4 pb-8 text-xs text-slate-500">
+    Academic prototype. Do not use as a substitute for professional medical judgment.
+  </footer>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
