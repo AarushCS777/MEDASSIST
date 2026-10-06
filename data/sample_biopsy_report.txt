@@ -1,0 +1,23 @@
+SURGICAL PATHOLOGY / BIOPSY REPORT
+Patient ID: SYNTH-84920
+Specimen: Right cervical lymph node, excisional biopsy
+Clinical History: 34-year-old individual presenting with painless persistent right cervical lymphadenopathy for 4 weeks following upper respiratory symptoms. No B symptoms (no fever, night sweats, or unintended weight loss).
+
+GROSS DESCRIPTION:
+Received in formalin labeled with patient identification is an intact, well-circumscribed, oval lymphoid tissue mass measuring 2.1 x 1.4 x 0.9 cm. The outer surface is smooth, glistening, and tan-pink. Cut surface is homogeneous, fleshy, tan-white, with visible lobular architecture. No areas of gross necrosis, hemorrhage, or extracapsular extension identified. Entire specimen submitted in cassettes A1 through A3.
+
+MICROSCOPIC DESCRIPTION:
+Histological sections of the lymph node demonstrate preserved overall nodal architecture. The cortex shows prominent lymphoid follicular hyperplasia characterized by numerous enlarged germinal centers varying in size and shape.
+The germinal centers exhibit well-defined mantle zones and distinct polarization into dark and light zones. High-power magnification reveals abundant tingible body macrophages containing apoptotic nuclear debris (starry-sky pattern) and active mitotic figures within normal physiologic limits.
+The interfollicular paracortical regions contain a polymorphous infiltrate composed of small mature lymphocytes, plasma cells, histiocytes, and scattered immunoblasts, accompanied by mild high endothelial venule proliferation.
+The subcapsular and medullary sinuses are patent, showing mild sinus histiocytosis.
+There is no evidence of capsular invasion, effacement of architecture, granulomatous inflammation, caseous necrosis, atypical Reed-Sternberg cells, or metastatic malignant cells.
+Immunohistochemical stains: CD20 highlights expanded B-cell follicles with preserved follicular dendritic networks (CD21+). BCL-2 is negative in germinal centers (ruling out follicular lymphoma) and positive in mantle zones and T-cells. Ki-67 proliferation index is appropriately elevated within germinal centers.
+
+IMPRESSION:
+RIGHT CERVICAL LYMPH NODE (EXCISIONAL BIOPSY):
+- REACTIVE LYMPHOID FOLLICULAR HYPERPLASIA AND SINUS HISTIOCYTOSIS.
+- NEGATIVE FOR MALIGNANCY OR LYMPHOPROLIFERATIVE DISORDER.
+
+COMMENT:
+The microscopic findings are characteristic of a benign, exuberant reactive lymphoid hyperplasia, typically seen as an immune response to localized viral or bacterial infection or inflammatory stimuli. Clinical correlation with ENT evaluation and infectious serologies is recommended to identify the underlying reactive trigger.

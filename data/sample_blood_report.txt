@@ -1,0 +1,38 @@
+COMPREHENSIVE LABORATORY REPORT
+Specimen Type: Venous Blood
+Collection Date: Synthetic Test Run
+
+COMPLETE BLOOD COUNT (CBC) WITH DIFFERENTIAL:
+- White Blood Cell Count (WBC): 6.8 x10^3/uL (Reference: 4.5 - 11.0) - NORMAL
+- Red Blood Cell Count (RBC): 4.65 x10^6/uL (Reference: 4.30 - 5.90) - NORMAL
+- Hemoglobin: 14.2 g/dL (Reference: 13.5 - 17.5) - NORMAL
+- Hematocrit: 42.1% (Reference: 38.8 - 50.0) - NORMAL
+- Mean Corpuscular Volume (MCV): 88.4 fL (Reference: 80.0 - 100.0) - NORMAL
+- Platelet Count: 245 x10^3/uL (Reference: 150 - 450) - NORMAL
+- Neutrophils: 58% (Reference: 40 - 70) - NORMAL
+- Lymphocytes: 32% (Reference: 20 - 40) - NORMAL
+- Monocytes: 7% (Reference: 2 - 8) - NORMAL
+
+COMPREHENSIVE METABOLIC PANEL (CMP):
+- Fasting Glucose: 94 mg/dL (Reference: 70 - 99) - NORMAL
+- Blood Urea Nitrogen (BUN): 14 mg/dL (Reference: 7 - 20) - NORMAL
+- Serum Creatinine: 0.9 mg/dL (Reference: 0.6 - 1.2) - NORMAL
+- Estimated GFR (eGFR): > 90 mL/min/1.73m2 - NORMAL kidney function
+- Sodium: 139 mmol/L (Reference: 136 - 145) - NORMAL
+- Potassium: 4.2 mmol/L (Reference: 3.5 - 5.1) - NORMAL
+- Total Bilirubin: 0.7 mg/dL (Reference: 0.2 - 1.2) - NORMAL
+- Alanine Aminotransferase (ALT): 22 U/L (Reference: 7 - 56) - NORMAL
+- Aspartate Aminotransferase (AST): 19 U/L (Reference: 10 - 40) - NORMAL
+
+LIPID PANEL:
+- Total Cholesterol: 218 mg/dL (Reference: < 200) - BORDERLINE ELEVATED
+- Triglycerides: 142 mg/dL (Reference: < 150) - NORMAL
+- HDL Cholesterol: 48 mg/dL (Reference: > 40) - NORMAL
+- LDL Cholesterol (Calculated): 141 mg/dL (Reference: < 100) - ELEVATED
+
+IMPRESSION:
+1. Complete blood count and basic metabolic parameters are within normal reference ranges.
+2. Lipid profile demonstrates mild elevation in total cholesterol and calculated LDL cholesterol.
+
+COMMENT:
+Findings should be correlated with overall cardiovascular risk profile, dietary habits, and family history with the primary care physician.

@@ -1,0 +1,7 @@
+{
+  "name": "MedAssist AI",
+  "description": "Academic healthcare-document understanding assistant for patients. Explains biopsy, pathology, lab, and clinic reports in simple, everyday English.",
+  "capabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

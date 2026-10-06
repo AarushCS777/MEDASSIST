@@ -1,0 +1,44 @@
+MedAssist Synthetic Clinical Guide
+This document is synthetic educational content created for software testing.
+It is not a real clinical guideline and must not be used for patient care.
+
+Section: Blood pressure
+For this synthetic guide, an adult blood pressure reading contains systolic and
+diastolic values in mmHg. Repeated elevated readings should be reviewed in
+clinical context. A single home reading is not enough to establish a diagnosis.
+Common documentation fields include date, time, position, cuff/site, systolic,
+diastolic, pulse, symptoms, and relevant medication context.
+
+Section: Medication reconciliation
+A medication reconciliation note should record the medication name, strength,
+route, frequency, indication when known, adherence concerns, allergies, and
+whether the list was verified against an available source. Uncertainty should
+be explicitly marked instead of silently filling missing information.
+
+Section: Hydration education
+For this synthetic example, patient education about hydration should use plain
+language, avoid promises, and encourage the person to follow the fluid advice
+given by their healthcare professional. Education should mention that needs vary
+with activity, environment, age, and medical conditions.
+
+Section: Red-flag escalation
+Educational drafts should not diagnose. If a person reports severe or rapidly
+worsening symptoms, the software should advise seeking urgent professional
+assessment rather than attempting to determine a diagnosis from the text.
+
+Section: Documentation quality
+A structured clinical draft should separate reported facts, observations,
+assessment statements supplied by the author, and follow-up plans. Missing
+information should be labeled "not provided" rather than invented.
+
+Section: Pathology and Biopsy Terminology Reference
+- Reactive Lymphoid Follicular Hyperplasia: A benign (non-cancerous) increase in the number of normal immune cells and enlargement of lymphoid follicles within a lymph node. This is a common, healthy physiological response of the immune system to localized infection, inflammation, or vaccination.
+- Sinus Histiocytosis: A harmless expansion of histiocytes (macrophages) within lymph node channels, reflecting the lymph node actively filtering and clearing cellular debris from a nearby inflammatory site.
+- Gross vs Microscopic Examination: Gross examination refers to visual inspection of the tissue specimen with the naked eye (measuring size, color, texture). Microscopic examination is the detailed analysis of thin tissue slices under a microscope to evaluate cellular architecture.
+- Tingible Body Macrophages: Specialized immune clean-up cells found inside active germinal centers; their presence is a classic hallmark of normal, healthy, reactive tissue rather than lymphoma.
+- Benign vs Malignant: "Benign" indicates a non-cancerous condition that does not invade other tissues. "Malignant" refers to cancerous growth that can invade or spread.
+- Impression / Conclusion: The primary finding or diagnostic conclusion reached by the pathologist after examining the tissue. It serves as the official medical summary of the biopsy.
+
+Section: Laboratory and Blood Test Reference
+- Complete Blood Count (CBC): Evaluates overall health and detects a variety of conditions, including infection and anemia, by measuring white blood cells, red blood cells, hemoglobin, and platelets.
+- Lipid Profile: Evaluates cardiovascular health by assessing total cholesterol, LDL ("bad" cholesterol), HDL ("good" cholesterol), and triglycerides. Mild elevations are typically managed with lifestyle, diet, and clinical monitoring.
