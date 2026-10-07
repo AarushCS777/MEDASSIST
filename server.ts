@@ -25,10 +25,17 @@ const publicDir = fs.existsSync(path.resolve('public'))
   ? path.resolve('public')
   : path.resolve('frontend');
 const dataDir = path.resolve('data');
-const uploadsDir = path.resolve(dataDir, 'uploads');
+const uploadsDir = process.env.VERCEL
+  ? path.join('/tmp', 'uploads')
+  : path.resolve(dataDir, 'uploads');
 
-if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
-if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
+try {
+  if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
+} catch {}
+
+try {
+  if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
+} catch {}
 
 // Serve static frontend assets from public/ (and fallback frontend/)
 app.use(express.static(publicDir));

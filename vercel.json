@@ -1,13 +1,20 @@
 {
   "version": 2,
-  "rewrites": [
+  "framework": null,
+  "builds": [
     {
-      "source": "/api/(.*)",
-      "destination": "/api/index"
+      "src": "server.ts",
+      "use": "@vercel/node"
+    }
+  ],
+  "routes": [
+    {
+      "src": "/api/(.*)",
+      "dest": "server.ts"
     },
     {
-      "source": "/static/(.*)",
-      "destination": "/$1"
+      "src": "/(.*)",
+      "dest": "server.ts"
     }
   ]
 }
