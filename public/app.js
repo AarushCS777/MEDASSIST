@@ -7,6 +7,34 @@ const $ = (id) => document.getElementById(id);
 
 let currentDocumentId = null;
 
+// Light / Dark Theme Management
+function initTheme() {
+  const saved = localStorage.getItem('medassist_theme');
+  const prefersLight = window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches;
+  const initialTheme = saved || (prefersLight ? 'light' : 'dark');
+  applyTheme(initialTheme);
+}
+
+function applyTheme(theme) {
+  document.documentElement.setAttribute('data-theme', theme);
+  try {
+    localStorage.setItem('medassist_theme', theme);
+  } catch (e) {}
+
+  const icon = $('themeIcon');
+  const text = $('themeText');
+  if (icon) icon.textContent = theme === 'light' ? '☀️' : '🌙';
+  if (text) text.textContent = theme === 'light' ? 'Light' : 'Dark';
+}
+
+function toggleTheme() {
+  const current = document.documentElement.getAttribute('data-theme') || 'dark';
+  const next = current === 'dark' ? 'light' : 'dark';
+  applyTheme(next);
+}
+
+$('themeToggle')?.addEventListener('click', toggleTheme);
+
 async function api(path, options = {}) {
   const response = await fetch(path, options);
   const data = await response.json().catch(() => ({ detail: "Invalid server response." }));
@@ -44,20 +72,20 @@ async function checkHealth() {
     const data = await api("/api/health");
     const badge = $("healthBadge");
     if (badge) {
-      badge.textContent = data.status === "ok" ? "● System Online" : "System Issue";
-      badge.style.color = "#86efac";
-      badge.title = `${data.total_documents || 0} documents indexed`;
+      badge.textContent = data.status === "ok" ? "● Online" : "System Issue";
+      badge.style.color = "#10b981";
+      badge.title = `${data.total_documents || 0} reference guides ready`;
     }
   } catch (error) {
     const badge = $("healthBadge");
     if (badge) {
-      badge.textContent = "● Offline (Local Fallback)";
-      badge.style.color = "#fcd34d";
+      badge.textContent = "● Offline Mode";
+      badge.style.color = "#f59e0b";
     }
   }
 }
 
-// Render Document Analysis
+// Render Document Analysis (Ordered by priority)
 function renderAnalysis(data) {
   currentDocumentId = data.documentId || data.filename;
 
@@ -65,16 +93,16 @@ function renderAnalysis(data) {
   if (!container) return;
   container.classList.remove("hidden");
 
-  // File info
+  // Header info
   $("reportFilename").textContent = data.filename || "Uploaded Report";
-  $("reportTypeBadge").textContent = data.documentType || "Clinical Document";
+  $("reportTypeBadge").textContent = data.documentType || "Medical Report";
 
   const subinfo = $("reportSubinfo");
   if (subinfo) {
     const scanNotice = data.ocrUsed
-      ? "Scanned report detected • OCR applied"
+      ? "Scanned report detected • Text transcribed via OCR"
       : "Standard text extraction";
-    subinfo.textContent = `${scanNotice} • ${data.sectionsDetected?.length || 0} sections recognized`;
+    subinfo.textContent = `${scanNotice} • ${data.sectionsDetected?.length || 0} document sections recognized`;
   }
 
   const ocrBadge = $("ocrBadge");
@@ -82,8 +110,6 @@ function renderAnalysis(data) {
     if (data.ocrUsed) {
       ocrBadge.classList.remove("hidden");
       ocrBadge.textContent = "OCR Applied";
-      ocrBadge.style.color = "#38bdf8";
-      ocrBadge.style.borderColor = "#0284c7";
     } else {
       ocrBadge.classList.add("hidden");
     }
@@ -95,49 +121,68 @@ function renderAnalysis(data) {
   $("summaryText").textContent =
     analysis.summary || "Summary could not be generated from the document.";
 
-  // 2. Impression / Conclusion
-  const imp = analysis.impression || {};
-  $("impressionReportSays").textContent =
-    imp.reportSays || "No explicit Impression or Conclusion section found.";
-  $("impressionSimpleExplanation").textContent =
-    imp.simpleExplanation || "Consult your physician for diagnosis interpretation.";
+  // 2. What the Report Says
+  const whatReportSaysList = $("whatReportSaysList");
+  if (whatReportSaysList) {
+    whatReportSaysList.innerHTML = "";
+    const statements = analysis.whatReportSays || [];
+    if (statements.length === 0) {
+      whatReportSaysList.innerHTML = `<li class="muted">No direct summary statements could be extracted.</li>`;
+    } else {
+      statements.forEach((stmt) => {
+        const li = document.createElement("li");
+        li.className = "flex items-start gap-2.5 leading-relaxed";
+        li.innerHTML = `<span class="text-sky-500 font-bold mt-0.5">•</span> <span>${escapeHtml(stmt)}</span>`;
+        whatReportSaysList.appendChild(li);
+      });
+    }
+  }
 
   // 3. Important Findings
   const findingsList = $("keyFindingsList");
-  findingsList.innerHTML = "";
-  const findings = analysis.whatReportSays || [];
-  if (findings.length === 0) {
-    findingsList.innerHTML = `<li class="text-slate-400">Review findings with treating physician.</li>`;
-  } else {
-    findings.forEach((finding) => {
-      const li = document.createElement("li");
-      li.className = "flex items-start gap-2 leading-relaxed";
-      li.innerHTML = `<span class="text-sky-400 mt-1">•</span> <span>${escapeHtml(finding)}</span>`;
-      findingsList.appendChild(li);
-    });
+  if (findingsList) {
+    findingsList.innerHTML = "";
+    const findings = analysis.whatReportSays || [];
+    if (findings.length === 0) {
+      findingsList.innerHTML = `<li class="muted">Review findings with treating physician.</li>`;
+    } else {
+      findings.forEach((finding) => {
+        const li = document.createElement("li");
+        li.className = "flex items-start gap-2.5 leading-relaxed";
+        li.innerHTML = `<span class="text-sky-500 font-bold mt-0.5">✓</span> <span>${escapeHtml(finding)}</span>`;
+        findingsList.appendChild(li);
+      });
+    }
   }
 
-  // 4. Important Terms Table
+  // 4. Important Medical Terms Explained
   const termsBody = $("termsTableBody");
   termsBody.innerHTML = "";
   const terms = analysis.termsExplained || [];
   if (terms.length === 0) {
-    termsBody.innerHTML = `<tr><td colspan="2" class="text-slate-400 p-4 text-center">No specialized medical terminology flagged.</td></tr>`;
+    termsBody.innerHTML = `<tr><td colspan="2" class="muted p-4 text-center">No specialized medical terms flagged in this document.</td></tr>`;
   } else {
     terms.forEach((t) => {
       const tr = document.createElement("tr");
       tr.innerHTML = `
-        <td class="font-semibold text-sky-300 align-top">${escapeHtml(t.term)}</td>
-        <td class="text-slate-300 align-top">${escapeHtml(t.explanation)}</td>
+        <td class="font-semibold text-sky-600 dark:text-sky-400 align-top">${escapeHtml(t.term)}</td>
+        <td class="align-top">${escapeHtml(t.explanation)}</td>
       `;
       termsBody.appendChild(tr);
     });
   }
 
-  // 5. What This Report Does NOT Tell Us
+  // 5. Conclusion & Main Impression
+  const imp = analysis.impression || {};
+  $("impressionReportSays").textContent =
+    imp.reportSays || "No explicit Impression or Conclusion section was labeled in this report.";
+  $("impressionSimpleExplanation").textContent =
+    imp.simpleExplanation || "Consult your physician for diagnosis and clinical interpretation.";
+
+  // What This Report Does NOT Tell Us
   $("whatNotToldText").textContent =
     analysis.whatReportDoesNotTellUs ||
-    "This report by itself does not establish a complete medical diagnosis or treatment plan.";
+    "This report by itself does not establish a complete medical diagnosis, root cause, or treatment plan. A doctor must evaluate you in person.";
 
   // 6. Questions for Doctor
   const qList = $("questionsList");
@@ -145,12 +190,12 @@ function renderAnalysis(data) {
   const questions = analysis.questionsForDoctor || [];
   questions.forEach((q) => {
     const li = document.createElement("li");
-    li.className = "flex items-start gap-2 leading-relaxed";
-    li.innerHTML = `<span class="text-emerald-400 mt-1">✓</span> <span>"${escapeHtml(q)}"</span>`;
+    li.className = "flex items-start gap-2.5 leading-relaxed";
+    li.innerHTML = `<span class="text-emerald-600 dark:text-emerald-400 font-bold mt-0.5">?</span> <span>"${escapeHtml(q)}"</span>`;
     qList.appendChild(li);
   });
 
-  // 7. Sections Details
+  // Collapsible Sections Details
   const secDetails = $("sectionsDetails");
   if (secDetails) {
     secDetails.innerHTML = "";
@@ -160,15 +205,15 @@ function renderAnalysis(data) {
       secDetails.appendChild(secDiv);
     }
     const sourceDiv = document.createElement("div");
-    sourceDiv.innerHTML = `<strong>Primary Source:</strong> ${escapeHtml(data.filename)} (${data.rawTextLength || 0} characters analyzed)`;
+    sourceDiv.innerHTML = `<strong>Document Analyzed:</strong> ${escapeHtml(data.filename)} (${data.rawTextLength || 0} characters)`;
     secDetails.appendChild(sourceDiv);
   }
 
-  // Scroll to results smoothly
+  // Scroll smoothly to results
   container.scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
-// File Upload
+// File Upload Handling
 async function handleFileUpload(file) {
   if (!file) return;
 
@@ -225,31 +270,6 @@ if (dropZone) {
   });
 }
 
-// Sample buttons
-async function loadSample(sampleType) {
-  const status = $("uploadStatus");
-  status.textContent = `Loading ${sampleType} sample report…`;
-  try {
-    const sample = await api(`/api/samples/${sampleType}`);
-    const analysis = await api("/api/analyze-report", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        text: sample.content,
-        filename: sample.filename,
-      }),
-    });
-    status.textContent = `✓ Loaded and analyzed ${sample.filename}`;
-    renderAnalysis(analysis);
-  } catch (err) {
-    status.textContent = `Error loading sample: ${err.message}`;
-  }
-}
-
-$("btnSampleBiopsy")?.addEventListener("click", () => loadSample("biopsy"));
-$("btnSampleBlood")?.addEventListener("click", () => loadSample("blood"));
-$("btnSampleGuide")?.addEventListener("click", () => loadSample("guide"));
-
 // Copy Doctor Questions Button
 $("btnCopyQuestions")?.addEventListener("click", () => {
   const listItems = document.querySelectorAll("#questionsList li");
@@ -301,7 +321,7 @@ function addChatMessage(containerId, role, text, citations = []) {
 
     citations.forEach((c, idx) => {
       const citeRow = document.createElement("div");
-      citeRow.className = "mt-1.5 text-xs text-slate-400";
+      citeRow.className = "mt-1.5 text-xs opacity-80";
       citeRow.textContent = `[${idx + 1}] ${c.source}: "${c.excerpt}"`;
       citeBox.appendChild(citeRow);
     });
@@ -497,13 +517,14 @@ function formatMarkdown(str) {
   // Bold
   escaped = escaped.replace(/\*\*(.*?)\*\*/g, "<strong>$1</strong>");
   // Headers
-  escaped = escaped.replace(/^### (.*$)/gim, '<h4 class="font-bold text-sky-300 mt-2">$1</h4>');
-  escaped = escaped.replace(/^## (.*$)/gim, '<h3 class="font-bold text-sky-400 mt-3 text-base">$1</h3>');
-  escaped = escaped.replace(/^# (.*$)/gim, '<h2 class="font-bold text-sky-400 mt-3 text-lg">$1</h2>');
+  escaped = escaped.replace(/^### (.*$)/gim, '<h4 class="font-bold text-sky-600 dark:text-sky-300 mt-2">$1</h4>');
+  escaped = escaped.replace(/^## (.*$)/gim, '<h3 class="font-bold text-sky-600 dark:text-sky-400 mt-3 text-base">$1</h3>');
+  escaped = escaped.replace(/^# (.*$)/gim, '<h2 class="font-bold text-sky-600 dark:text-sky-400 mt-3 text-lg">$1</h2>');
   // Newlines
   escaped = escaped.replace(/\n/g, "<br>");
   return escaped;
 }
 
-// Initial call
+// Initial calls
+initTheme();
 checkHealth();

@@ -9,23 +9,43 @@
   <meta property="og:description" content="Academic healthcare-document understanding assistant for patients. Explains biopsy, pathology, lab, and clinic reports in simple, everyday English.">
   <script src="https://cdn.tailwindcss.com"></script>
   <link rel="stylesheet" href="style.css">
+  <script>
+    // Apply saved theme immediately before body render to avoid theme flicker
+    (function() {
+      try {
+        var savedTheme = localStorage.getItem('medassist_theme');
+        if (savedTheme === 'light' || savedTheme === 'dark') {
+          document.documentElement.setAttribute('data-theme', savedTheme);
+        } else if (window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches) {
+          document.documentElement.setAttribute('data-theme', 'light');
+        } else {
+          document.documentElement.setAttribute('data-theme', 'dark');
+        }
+      } catch (e) {}
+    })();
+  </script>
 </head>
-<body class="min-h-screen bg-slate-950 text-slate-100 flex flex-col">
+<body class="min-h-screen flex flex-col transition-colors duration-200">
   <!-- Top Navigation Bar -->
-  <header class="border-b border-slate-800 bg-slate-950/90 backdrop-blur sticky top-0 z-50">
-    <div class="mx-auto max-w-7xl px-4 py-4">
-      <div class="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+  <header class="sticky top-0 z-50 backdrop-blur">
+    <div class="mx-auto max-w-7xl px-4 py-3.5 sm:py-4">
+      <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div class="flex items-center gap-3">
           <div class="brand-mark">M</div>
           <div>
             <div class="flex items-center gap-2">
               <h1 class="text-xl font-bold tracking-tight">MedAssist AI</h1>
-              <span class="text-xs bg-sky-950 text-sky-400 border border-sky-800/60 rounded-full px-2 py-0.5 font-medium">Academic Prototype</span>
+              <span class="text-xs bg-sky-500/10 text-sky-600 dark:text-sky-400 border border-sky-500/20 rounded-full px-2 py-0.5 font-medium">Academic Prototype</span>
             </div>
-            <p class="text-xs text-slate-400">Patient-friendly healthcare document understanding assistant</p>
+            <p class="text-xs muted">Patient-friendly healthcare document understanding assistant</p>
           </div>
         </div>
-        <div class="flex items-center gap-3">
+        <div class="flex items-center gap-2.5 self-end sm:self-auto">
+          <!-- Light/Dark Theme Switch -->
+          <button id="themeToggle" class="theme-toggle" type="button" aria-label="Toggle light or dark theme" title="Toggle theme">
+            <span id="themeIcon">🌙</span>
+            <span id="themeText">Dark</span>
+          </button>
           <div id="healthBadge" class="status-badge">Checking API…</div>
         </div>
       </div>
@@ -57,12 +77,12 @@
       <div class="card">
         <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-4">
           <div>
-            <h2 class="section-title">Upload Your Medical Report</h2>
+            <h2 class="section-title text-xl">Understand Your Medical Report</h2>
             <p class="muted text-sm mt-1">
-              Upload a biopsy report, pathology result, blood test, or imaging report. We'll translate complex terms into everyday English.
+              Upload a medical report and get a clear, simple-English summary of what it says.
             </p>
           </div>
-          <div class="text-xs text-slate-400 bg-slate-900 border border-slate-800 rounded-lg p-2.5 max-w-xs">
+          <div class="text-xs muted bg-slate-500/10 border border-slate-500/20 rounded-lg p-2.5 max-w-xs">
             🔒 Academic prototype: files are processed in-memory for understanding.
           </div>
         </div>
@@ -70,43 +90,29 @@
         <!-- Drop Zone -->
         <label id="dropZone" class="drop-zone cursor-pointer">
           <input id="fileInput" type="file" accept=".pdf,.txt,.md,.png,.jpg,.jpeg,.webp" class="hidden">
-          <div class="text-4xl mb-3 text-sky-400">📄</div>
-          <div class="font-semibold text-lg text-slate-100">Drop your medical report here</div>
-          <div class="text-sm text-slate-400 mt-1">Accepts PDF (digital or scanned), text, and images (.png, .jpg)</div>
+          <div class="text-4xl mb-3 text-sky-500">📄</div>
+          <div class="font-semibold text-lg text-main">Drop your report here</div>
+          <div class="text-sm muted mt-1">Supports PDF, scanned PDF, images (PNG, JPG), and text files</div>
           <button type="button" class="btn btn-secondary mt-4 text-sm" onclick="document.getElementById('fileInput').click()">
             Browse Files
           </button>
         </label>
 
-        <!-- Quick 1-Click Synthetic Sample Buttons -->
-        <div class="mt-4 pt-4 border-t border-slate-800/80 flex flex-wrap items-center gap-2">
-          <span class="text-xs font-semibold text-slate-400 mr-1">Or test with a sample report:</span>
-          <button id="btnSampleBiopsy" class="btn-sample" type="button">
-            🔬 Cervical Lymph Node Biopsy
-          </button>
-          <button id="btnSampleBlood" class="btn-sample" type="button">
-            🩸 Blood & Lipid Lab Report
-          </button>
-          <button id="btnSampleGuide" class="btn-sample" type="button">
-            📘 Clinical Guide (Blood Pressure)
-          </button>
-        </div>
-
-        <div id="uploadStatus" class="mt-3 text-sm text-sky-400 font-medium"></div>
+        <div id="uploadStatus" class="mt-3 text-sm text-sky-600 dark:text-sky-400 font-medium"></div>
       </div>
 
       <!-- Report Analysis Results Container -->
       <div id="analysisContainer" class="space-y-6 hidden">
         <!-- Header Info Bar -->
-        <div class="card bg-slate-900/90 border-slate-800 flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+        <div class="card flex flex-col md:flex-row md:items-center md:justify-between gap-3">
           <div class="flex items-center gap-3">
             <div class="text-3xl">📋</div>
             <div>
-              <div class="flex items-center gap-2">
-                <h3 id="reportFilename" class="font-bold text-slate-100 text-lg">Document Analysis</h3>
-                <span id="reportTypeBadge" class="pill bg-sky-950 text-sky-400 border-sky-800">Biopsy / Histopathology</span>
+              <div class="flex items-center gap-2 flex-wrap">
+                <h3 id="reportFilename" class="font-bold text-lg">Document Analysis</h3>
+                <span id="reportTypeBadge" class="pill">Medical Report</span>
               </div>
-              <p id="reportSubinfo" class="text-xs text-slate-400 mt-0.5">Scanned detection, sections, and findings</p>
+              <p id="reportSubinfo" class="text-xs muted mt-0.5">Scanned detection, sections, and findings</p>
             </div>
           </div>
           <div class="flex items-center gap-2">
@@ -118,68 +124,48 @@
         </div>
 
         <!-- 1. Simple Summary -->
-        <div class="card border-sky-900/40 bg-gradient-to-br from-slate-900 to-slate-950">
+        <div class="card border-sky-500/30">
           <div class="flex items-center gap-2.5 mb-2">
             <span class="text-xl">✨</span>
-            <h3 class="section-title text-sky-400">1. Simple Summary</h3>
+            <h3 class="section-title text-sky-600 dark:text-sky-400">1. Simple Summary</h3>
           </div>
-          <p id="summaryText" class="text-slate-200 leading-relaxed text-base">
+          <p id="summaryText" class="leading-relaxed text-base">
             Analyzing document…
           </p>
         </div>
 
-        <!-- 2. Main Impression / Conclusion (Crucial Medical Comparison) -->
-        <div class="card border-amber-900/30">
-          <div class="flex items-center justify-between mb-3">
-            <div class="flex items-center gap-2.5">
-              <span class="text-xl">🎯</span>
-              <h3 class="section-title text-amber-300">2. Main Impression & Conclusion</h3>
-            </div>
-            <span class="text-xs font-semibold text-slate-400 bg-slate-800/80 px-2.5 py-1 rounded-md">Official Pathology Summary</span>
-          </div>
-
-          <div class="grid gap-4 md:grid-cols-2">
-            <!-- What the report says verbatim -->
-            <div class="comparison-card comparison-source">
-              <div class="text-xs font-bold uppercase tracking-wider text-slate-300 mb-1 flex items-center gap-1.5">
-                <span>📄 What the Report Says (Original Wording)</span>
-              </div>
-              <p id="impressionReportSays" class="text-sm text-slate-200 font-mono whitespace-pre-wrap leading-relaxed">
-                Loading…
-              </p>
-            </div>
-
-            <!-- Plain English Explanation -->
-            <div class="comparison-card comparison-explanation">
-              <div class="text-xs font-bold uppercase tracking-wider text-sky-400 mb-1 flex items-center gap-1.5">
-                <span>💡 In Simple Terms (Plain English)</span>
-              </div>
-              <p id="impressionSimpleExplanation" class="text-sm text-sky-100 leading-relaxed">
-                Loading…
-              </p>
-            </div>
-          </div>
-        </div>
-
-        <!-- 3. What the Report Says (Key Findings) -->
+        <!-- 2. What the Report Says -->
         <div class="card">
           <div class="flex items-center gap-2.5 mb-3">
-            <span class="text-xl">🔍</span>
-            <h3 class="section-title text-slate-100">3. Important Findings in This Report</h3>
+            <span class="text-xl">📄</span>
+            <h3 class="section-title">2. What the Report Says</h3>
           </div>
-          <ul id="keyFindingsList" class="space-y-2.5 text-sm text-slate-300">
+          <p class="muted text-xs mb-3">Directly supported factual statements from your document:</p>
+          <ul id="whatReportSaysList" class="space-y-2.5 text-sm">
             <!-- Populated dynamically -->
           </ul>
         </div>
 
-        <!-- 4. Important Medical Terms Explained -->
+        <!-- 3. Important Findings -->
         <div class="card">
-          <div class="flex items-center justify-between mb-3">
+          <div class="flex items-center gap-2.5 mb-3">
+            <span class="text-xl">🔍</span>
+            <h3 class="section-title">3. Important Findings</h3>
+          </div>
+          <p class="muted text-xs mb-3">Key observations, measurements, or test results detected:</p>
+          <ul id="keyFindingsList" class="space-y-2.5 text-sm">
+            <!-- Populated dynamically -->
+          </ul>
+        </div>
+
+        <!-- 4. Medical Terms Explained -->
+        <div class="card">
+          <div class="flex items-center justify-between mb-3 flex-wrap gap-2">
             <div class="flex items-center gap-2.5">
               <span class="text-xl">📖</span>
-              <h3 class="section-title text-slate-100">4. Important Medical Terms Explained</h3>
+              <h3 class="section-title">4. Medical Terms Explained</h3>
             </div>
-            <span class="text-xs text-slate-400">Terms actually present in your document</span>
+            <span class="text-xs muted">Terms actually present in your document translated into simple words</span>
           </div>
           <div class="overflow-x-auto">
             <table class="medical-table">
@@ -196,64 +182,97 @@
           </div>
         </div>
 
-        <!-- 5. What This Report Does NOT Tell Us -->
-        <div class="card border-slate-800">
+        <!-- 5. Conclusion & Main Impression -->
+        <div class="card border-amber-500/30">
+          <div class="flex items-center justify-between mb-3 flex-wrap gap-2">
+            <div class="flex items-center gap-2.5">
+              <span class="text-xl">🎯</span>
+              <h3 class="section-title text-amber-600 dark:text-amber-400">5. Conclusion & Main Impression</h3>
+            </div>
+            <span class="text-xs font-semibold muted bg-slate-500/10 px-2.5 py-1 rounded-md">Official Report Summary</span>
+          </div>
+
+          <div class="grid gap-4 md:grid-cols-2">
+            <!-- What the report says verbatim -->
+            <div class="comparison-card comparison-source">
+              <div class="text-xs font-bold uppercase tracking-wider muted mb-1.5 flex items-center gap-1.5">
+                <span>📄 What the Report Says (Original Wording)</span>
+              </div>
+              <p id="impressionReportSays" class="text-sm font-mono whitespace-pre-wrap leading-relaxed">
+                Loading…
+              </p>
+            </div>
+
+            <!-- Plain English Explanation -->
+            <div class="comparison-card comparison-explanation">
+              <div class="text-xs font-bold uppercase tracking-wider text-sky-600 dark:text-sky-400 mb-1.5 flex items-center gap-1.5">
+                <span>💡 In Simple Terms (Plain English)</span>
+              </div>
+              <p id="impressionSimpleExplanation" class="text-sm leading-relaxed">
+                Loading…
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <!-- Boundaries: What This Report Does NOT Tell Us -->
+        <div class="card">
           <div class="flex items-center gap-2.5 mb-2">
             <span class="text-xl">🛑</span>
-            <h3 class="section-title text-slate-300">5. What This Report Does NOT Tell Us</h3>
+            <h3 class="section-title text-sm font-semibold">What This Report Does NOT Tell Us</h3>
           </div>
-          <p id="whatNotToldText" class="text-sm text-slate-300 leading-relaxed">
+          <p id="whatNotToldText" class="text-sm muted leading-relaxed">
             Loading…
           </p>
         </div>
 
-        <!-- 6. Questions You Can Ask Your Doctor -->
-        <div class="card border-emerald-950/60 bg-gradient-to-br from-slate-900 to-emerald-950/20">
-          <div class="flex items-center justify-between mb-3">
+        <!-- 6. Questions to Ask Your Doctor -->
+        <div class="card border-emerald-500/30">
+          <div class="flex items-center justify-between mb-3 flex-wrap gap-2">
             <div class="flex items-center gap-2.5">
               <span class="text-xl">🩺</span>
-              <h3 class="section-title text-emerald-400">6. Questions You Can Ask Your Doctor</h3>
+              <h3 class="section-title text-emerald-600 dark:text-emerald-400">6. Questions to Ask Your Doctor</h3>
             </div>
             <button id="btnCopyQuestions" class="btn btn-secondary text-xs" type="button">
               📋 Copy Questions
             </button>
           </div>
-          <ul id="questionsList" class="space-y-2.5 text-sm text-emerald-100">
+          <ul id="questionsList" class="space-y-2.5 text-sm">
             <!-- Populated dynamically -->
           </ul>
         </div>
 
-        <!-- 7. Document Sections & Reference Sources (Collapsible) -->
-        <details class="card group cursor-pointer border-slate-800">
-          <summary class="flex items-center justify-between font-semibold text-slate-300 list-none">
+        <!-- Collapsible: Document Sections & Reference Sources -->
+        <details class="card group cursor-pointer">
+          <summary class="flex items-center justify-between font-semibold list-none">
             <span class="flex items-center gap-2">
               <span>📂</span> Detected Document Sections & Knowledge Sources
             </span>
-            <span class="text-xs text-sky-400 group-open:rotate-180 transition-transform">▼</span>
+            <span class="text-xs text-sky-500 group-open:rotate-180 transition-transform">▼</span>
           </summary>
-          <div class="mt-4 pt-4 border-t border-slate-800/80 space-y-3 text-xs text-slate-400" id="sectionsDetails">
+          <div class="mt-4 pt-4 border-t border-slate-500/20 space-y-3 text-xs muted" id="sectionsDetails">
             <!-- Populated dynamically -->
           </div>
         </details>
 
         <!-- Inline Follow-Up Q&A Section -->
-        <div class="card border-sky-900/50" id="inlineQaCard">
+        <div class="card border-sky-500/30" id="inlineQaCard">
           <div class="flex items-center justify-between gap-4 mb-3">
             <div>
-              <h3 class="section-title text-sky-300">Ask a Follow-Up Question About This Report</h3>
+              <h3 class="section-title text-sky-600 dark:text-sky-300">Ask a Follow-Up Question About This Report</h3>
               <p class="muted text-xs mt-0.5">Ask anything in plain language. Answers are grounded directly in your uploaded report.</p>
             </div>
-            <span class="pill bg-sky-950 text-sky-400">Grounded Q&A</span>
+            <span class="pill">Grounded Q&A</span>
           </div>
 
           <!-- Quick Suggestion Chips -->
           <div class="flex flex-wrap gap-2 mb-4">
-            <span class="text-xs text-slate-400 self-center">Try asking:</span>
+            <span class="text-xs muted self-center">Try asking:</span>
             <button class="suggestion-chip" type="button" data-prompt="Explain the impression in simple words">
               Explain the impression in simple words
             </button>
-            <button class="suggestion-chip" type="button" data-prompt="Is there any sign of cancer in this report?">
-              Is there any sign of cancer?
+            <button class="suggestion-chip" type="button" data-prompt="What are the key findings?">
+              What are the key findings?
             </button>
             <button class="suggestion-chip" type="button" data-prompt="What are the most important terms to know?">
               What are the key terms?
@@ -274,7 +293,7 @@
           </div>
 
           <div class="flex flex-col md:flex-row gap-3">
-            <input id="inlineQuestionInput" class="input flex-1" placeholder="e.g. Can you explain what reactive follicular hyperplasia means?">
+            <input id="inlineQuestionInput" class="input flex-1" placeholder="e.g. Can you explain what this result means in simple words?">
             <button id="btnInlineAsk" class="btn" type="button">Ask MedAssist</button>
           </div>
         </div>
@@ -293,15 +312,15 @@
         </div>
 
         <div class="flex flex-wrap gap-2 mb-4">
-          <span class="text-xs text-slate-400 self-center">Suggestions:</span>
+          <span class="text-xs muted self-center">Suggestions:</span>
           <button class="suggestion-chip qa-prompt" type="button" data-prompt="What should be recorded for a blood pressure reading?">
             Blood pressure recording guidelines
           </button>
-          <button class="suggestion-chip qa-prompt" type="button" data-prompt="What does reactive lymphoid follicular hyperplasia mean?">
-            What is reactive follicular hyperplasia?
+          <button class="suggestion-chip qa-prompt" type="button" data-prompt="What does a high cholesterol reading indicate in simple terms?">
+            What does high cholesterol mean?
           </button>
-          <button class="suggestion-chip qa-prompt" type="button" data-prompt="What does a high LDL cholesterol reading indicate?">
-            What does high LDL cholesterol mean?
+          <button class="suggestion-chip qa-prompt" type="button" data-prompt="What is a Complete Blood Count (CBC) test?">
+            What is a CBC blood test?
           </button>
         </div>
 
@@ -324,7 +343,7 @@
         <div class="card">
           <h2 class="section-title">Document Summarizer</h2>
           <p class="muted text-xs mb-3">Paste any medical report text for a plain-English patient-friendly summary.</p>
-          <textarea id="summaryInput" class="textarea" placeholder="Paste medical report or discharge text here…"></textarea>
+          <textarea id="summaryInput" class="textarea" placeholder="Paste medical report or clinic notes text here…"></textarea>
           <button id="summaryButton" class="btn mt-3" type="button">Create Plain-English Summary</button>
           <pre id="summaryOutput" class="output"></pre>
         </div>
@@ -353,8 +372,8 @@
   </main>
 
   <!-- Footer -->
-  <footer class="border-t border-slate-900 bg-slate-950/80 py-6 mt-8">
-    <div class="mx-auto max-w-7xl px-4 flex flex-col md:flex-row items-center justify-between gap-3 text-xs text-slate-500">
+  <footer class="border-t border-slate-500/20 py-6 mt-8">
+    <div class="mx-auto max-w-7xl px-4 flex flex-col md:flex-row items-center justify-between gap-3 text-xs muted">
       <div>
         MedAssist AI — Academic Healthcare Document Prototype. Always consult a licensed healthcare professional.
       </div>
