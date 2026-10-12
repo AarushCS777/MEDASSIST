@@ -8,7 +8,9 @@
   "scripts": {
     "dev": "tsx server.ts",
     "build": "tsc --noEmit",
+    "lint": "tsc --noEmit",
     "start": "tsx server.ts",
+    "ingest:knowledge": "tsx scripts/ingest_medical_knowledge.ts",
     "test": "tsx tests/verify_medassist.ts"
   },
   "dependencies": {

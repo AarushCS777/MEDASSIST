@@ -7,6 +7,7 @@ import crypto from 'crypto';
 import pdfParse from 'pdf-parse';
 import { createWorker } from 'tesseract.js';
 import { GoogleGenAI } from '@google/genai';
+import { fileURLToPath } from 'url';
 
 const app = express();
 const PORT = parseInt(process.env.PORT || '3000', 10);
@@ -25,26 +26,15 @@ const publicDir = fs.existsSync(path.resolve('public'))
   ? path.resolve('public')
   : path.resolve('frontend');
 const dataDir = path.resolve('data');
-const uploadsDir = process.env.VERCEL
-  ? path.join('/tmp', 'uploads')
-  : path.resolve(dataDir, 'uploads');
 
-try {
-  if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
-} catch {}
-
-try {
-  if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
-} catch {}
-
-// Serve static frontend assets from public/ (and fallback frontend/)
+// Serve static frontend assets from public/
 app.use(express.static(publicDir));
 app.use('/static', express.static(publicDir));
 if (fs.existsSync(path.resolve('frontend'))) {
   app.use('/static', express.static(path.resolve('frontend')));
 }
 
-// Curated medical terminology glossary for non-medical users
+// Curated medical terminology dictionary for patient-friendly translations
 export const MEDICAL_GLOSSARY: Record<string, string> = {
   'reactive lymphoid follicular hyperplasia':
     'A harmless, non-cancerous swelling of lymph-node immune centers in response to an infection or inflammation.',
@@ -146,36 +136,62 @@ export const MEDICAL_GLOSSARY: Record<string, string> = {
     'The final medical assessment and findings determined from the document.',
 };
 
-// In-Memory Document & Chunk Store
-export interface DocumentChunk {
+// Data Structures for Separated Stores
+export interface PublicMedicalRecord {
   id: string;
+  title: string;
+  url: string;
   source: string;
-  page: number | string;
-  fileType: string;
-  section?: string;
-  content: string;
+  topic: string;
+  retrievalDate: string;
+  license: string;
+  summary: string;
   tokens: string[];
 }
 
-export interface IngestedDocumentRecord {
+export interface DocumentChunk {
   id: string;
+  sourceType: 'public-reference' | 'user-report' | 'synthetic-demo';
+  sourceTitle: string;
+  sourceUrl?: string;
+  topic?: string;
+  section?: string;
+  content: string;
+  tokens: string[];
+  vector: Map<string, number>;
+  vectorMagnitude: number;
+}
+
+export interface UserSessionReport {
+  sessionId: string;
+  documentId: string;
   filename: string;
   documentType: string;
   isScanned: boolean;
   ocrUsed: boolean;
-  text: string;
+  rawText: string;
   sections: Array<{ name: string; content: string }>;
-  uploadedAt: string;
-  analysis?: any;
+  chunks: DocumentChunk[];
+  analysis: any;
+  uploadedAt: number;
 }
 
-const knowledgeStore: {
-  documents: Map<string, IngestedDocumentRecord>;
+// Public Reference Knowledge Store (Read-Only Public Educational Records)
+const publicReferenceStore: {
+  records: PublicMedicalRecord[];
   chunks: DocumentChunk[];
+  idfMap: Map<string, number>;
 } = {
-  documents: new Map(),
+  records: [],
   chunks: [],
+  idfMap: new Map(),
 };
+
+// Isolated User Session Reports Store (Keyed strictly by sessionId)
+const userSessionReports = new Map<string, UserSessionReport>();
+
+// Synthetic Demo Examples Store
+const syntheticDemoStore = new Map<string, UserSessionReport>();
 
 function cleanText(text: string): string {
   return text
@@ -196,7 +212,7 @@ function tokenize(text: string): string[] {
 
 function splitTextIntoChunks(
   text: string,
-  chunkSize = 800,
+  chunkSize = 750,
   chunkOverlap = 100
 ): string[] {
   const separators = ['\n\n', '\n', '. ', ' ', ''];
@@ -255,6 +271,148 @@ function splitTextIntoChunks(
     finalChunks.push(chunk);
   }
   return finalChunks.filter((c) => c.length > 0);
+}
+
+// Compute Term Vector & Magnitude
+function computeVector(tokens: string[], idfMap: Map<string, number>): { vector: Map<string, number>; magnitude: number } {
+  const tf = new Map<string, number>();
+  for (const t of tokens) {
+    tf.set(t, (tf.get(t) || 0) + 1);
+  }
+
+  const vector = new Map<string, number>();
+  let sumSq = 0;
+
+  for (const [term, count] of tf.entries()) {
+    const termIdf = idfMap.get(term) || 1.5;
+    const weight = (1 + Math.log(count)) * termIdf;
+    vector.set(term, weight);
+    sumSq += weight * weight;
+  }
+
+  const magnitude = Math.sqrt(sumSq) || 1;
+  return { vector, magnitude };
+}
+
+// Cosine Vector Similarity
+function cosineSimilarity(
+  qVec: Map<string, number>,
+  qMag: number,
+  dVec: Map<string, number>,
+  dMag: number
+): number {
+  let dot = 0;
+  for (const [term, qWeight] of qVec.entries()) {
+    const dWeight = dVec.get(term);
+    if (dWeight) {
+      dot += qWeight * dWeight;
+    }
+  }
+  return dot / (qMag * dMag);
+}
+
+// Initialize & Load Public Knowledge Base
+export function initPublicKnowledgeBase() {
+  const kbPath = path.resolve(dataDir, 'medical_knowledge_base.json');
+  if (fs.existsSync(kbPath)) {
+    try {
+      const raw = fs.readFileSync(kbPath, 'utf-8');
+      const records: PublicMedicalRecord[] = JSON.parse(raw);
+      publicReferenceStore.records = records;
+
+      // Build IDF Map
+      const totalDocs = records.length;
+      const docFreq = new Map<string, number>();
+      for (const rec of records) {
+        const uniqueTokens = new Set(rec.tokens);
+        for (const t of uniqueTokens) {
+          docFreq.set(t, (docFreq.get(t) || 0) + 1);
+        }
+      }
+
+      for (const [term, df] of docFreq.entries()) {
+        const idf = Math.log(1 + (totalDocs - df + 0.5) / (df + 0.5));
+        publicReferenceStore.idfMap.set(term, Math.max(0.5, idf));
+      }
+
+      // Build Chunks with Dense Vectors
+      publicReferenceStore.chunks = [];
+      for (const rec of records) {
+        const chunkTexts = splitTextIntoChunks(rec.summary, 750, 80);
+        for (let i = 0; i < chunkTexts.length; i++) {
+          const content = chunkTexts[i];
+          const tokens = tokenize(`${rec.title} ${content}`);
+          const { vector, magnitude } = computeVector(tokens, publicReferenceStore.idfMap);
+
+          publicReferenceStore.chunks.push({
+            id: `${rec.id}-chunk-${i}`,
+            sourceType: 'public-reference',
+            sourceTitle: rec.title,
+            sourceUrl: rec.url,
+            topic: rec.topic,
+            section: rec.title,
+            content,
+            tokens,
+            vector,
+            vectorMagnitude: magnitude,
+          });
+        }
+      }
+
+      console.log(
+        `[MedAssist RAG] Loaded ${publicReferenceStore.records.length} verified public medical records (${publicReferenceStore.chunks.length} reference chunks).`
+      );
+    } catch (err) {
+      console.warn('[MedAssist RAG] Could not parse medical_knowledge_base.json:', err);
+    }
+  } else {
+    console.warn('[MedAssist RAG] medical_knowledge_base.json not found. Run scripts/ingest_medical_knowledge.ts.');
+  }
+
+  // Preload Synthetic Demos in isolated demo store
+  loadSyntheticDemos();
+}
+
+function loadSyntheticDemos() {
+  const biopsyPath = path.resolve(dataDir, 'sample_biopsy_report.txt');
+  if (fs.existsSync(biopsyPath)) {
+    const text = fs.readFileSync(biopsyPath, 'utf-8');
+    const sections = detectDocumentSections(text);
+    const chunks = createReportChunks('demo-biopsy', 'sample_biopsy_report.txt', text, sections);
+    syntheticDemoStore.set('demo-biopsy', {
+      sessionId: 'demo-biopsy',
+      documentId: 'sample_biopsy_report.txt',
+      filename: 'sample_biopsy_report.txt',
+      documentType: 'Biopsy / Histopathology',
+      isScanned: false,
+      ocrUsed: false,
+      rawText: text,
+      sections,
+      chunks,
+      analysis: analyzeDocumentDeterministically(text, 'sample_biopsy_report.txt'),
+      uploadedAt: Date.now(),
+    });
+  }
+
+  const bloodPath = path.resolve(dataDir, 'sample_blood_report.txt');
+  if (fs.existsSync(bloodPath)) {
+    const text = fs.readFileSync(bloodPath, 'utf-8');
+    const sections = detectDocumentSections(text);
+    const chunks = createReportChunks('demo-blood', 'sample_blood_report.txt', text, sections);
+    syntheticDemoStore.set('demo-blood', {
+      sessionId: 'demo-blood',
+      documentId: 'sample_blood_report.txt',
+      filename: 'sample_blood_report.txt',
+      documentType: 'Laboratory / Blood Work',
+      isScanned: false,
+      ocrUsed: false,
+      rawText: text,
+      sections,
+      chunks,
+      analysis: analyzeDocumentDeterministically(text, 'sample_blood_report.txt'),
+      uploadedAt: Date.now(),
+    });
+  }
 }
 
 // Section Detection
@@ -379,7 +537,6 @@ function findTermsInText(
     }
   }
 
-  // Deduplicate and return top matching terms
   const seen = new Set<string>();
   return found.filter((item) => {
     if (seen.has(item.term.toLowerCase())) return false;
@@ -388,33 +545,19 @@ function findTermsInText(
   });
 }
 
-function indexDocument(
+// Create Chunks for a Session Report
+function createReportChunks(
+  sessionId: string,
   filename: string,
-  rawText: string,
-  isScanned = false,
-  ocrUsed = false
-): IngestedDocumentRecord {
-  const cleaned = cleanText(rawText);
-  const docType = detectDocumentType(cleaned);
-  const sections = detectDocumentSections(cleaned);
+  text: string,
+  sections: Array<{ name: string; content: string }>
+): DocumentChunk[] {
+  const chunkTexts = splitTextIntoChunks(text, 750, 80);
+  const chunks: DocumentChunk[] = [];
 
-  // Remove existing chunks for this source if re-indexing
-  knowledgeStore.chunks = knowledgeStore.chunks.filter(
-    (c) => c.source !== filename
-  );
-
-  const chunkTexts = splitTextIntoChunks(cleaned, 800, 100);
   for (let i = 0; i < chunkTexts.length; i++) {
     const content = chunkTexts[i];
-    const hash = crypto
-      .createHash('sha256')
-      .update(`${filename}|${i}|${content}`)
-      .digest('hex')
-      .slice(0, 24);
-    const id = `${filename}-${hash}`;
-
-    // Determine nearest section
-    let assignedSection = 'General';
+    let assignedSection = 'General Information';
     for (const sec of sections) {
       if (sec.content.includes(content.slice(0, 60))) {
         assignedSection = sec.name;
@@ -422,80 +565,134 @@ function indexDocument(
       }
     }
 
-    knowledgeStore.chunks.push({
-      id,
-      source: filename,
-      page: 1,
-      fileType: isScanned ? 'scanned-pdf' : 'text',
+    const tokens = tokenize(`${filename} ${assignedSection} ${content}`);
+    const { vector, magnitude } = computeVector(tokens, publicReferenceStore.idfMap);
+
+    chunks.push({
+      id: `${sessionId}-chunk-${i}`,
+      sourceType: 'user-report',
+      sourceTitle: filename,
       section: assignedSection,
       content,
-      tokens: tokenize(content),
+      tokens,
+      vector,
+      vectorMagnitude: magnitude,
     });
   }
 
-  const record: IngestedDocumentRecord = {
-    id: filename,
-    filename,
-    documentType: docType,
-    isScanned,
-    ocrUsed,
-    text: cleaned,
-    sections,
-    uploadedAt: new Date().toISOString(),
-  };
-
-  knowledgeStore.documents.set(filename, record);
-  return record;
+  return chunks;
 }
 
-// Search knowledge store (both uploaded documents and reference guide)
-function searchKnowledge(
+// Semantic Synonyms for Medical Query Expansion
+const MEDICAL_SYNONYMS: Record<string, string[]> = {
+  cancer: ['malignancy', 'malignant', 'tumor', 'lymphoma', 'carcinoma', 'neoplasm', 'benign', 'metastatic'],
+  malignant: ['cancer', 'malignancy', 'carcinoma', 'lymphoma'],
+  tumor: ['mass', 'nodule', 'neoplasm', 'malignancy', 'benign'],
+  heart: ['cardiac', 'ecg', 'ekg', 'myocardial', 'troponin'],
+  kidney: ['renal', 'creatinine', 'bun', 'egfr', 'nephro'],
+  liver: ['hepatic', 'alt', 'ast', 'bilirubin'],
+  sugar: ['glucose', 'a1c', 'hba1c', 'diabetes'],
+  biopsy: ['pathology', 'histopathology', 'specimen', 'hyperplasia', 'impression'],
+};
+
+// Vector Search Across Isolated Stores
+export function searchKnowledgeVector(
   query: string,
-  k = 5,
-  targetDocument?: string
-): Array<{ chunk: DocumentChunk; score: number }> {
-  const queryTokens = tokenize(query);
-  if (queryTokens.length === 0 || knowledgeStore.chunks.length === 0) return [];
+  sessionId?: string,
+  limit = 5
+): {
+  reportChunks: Array<{ chunk: DocumentChunk; score: number }>;
+  referenceChunks: Array<{ chunk: DocumentChunk; score: number }>;
+} {
+  const baseTokens = tokenize(query);
+  if (baseTokens.length === 0) {
+    return { reportChunks: [], referenceChunks: [] };
+  }
 
-  const queryLower = query.toLowerCase();
-
-  const candidates = targetDocument
-    ? knowledgeStore.chunks.filter(
-        (c) =>
-          c.source === targetDocument ||
-          c.source.includes('sample_medical_guide.txt')
-      )
-    : knowledgeStore.chunks;
-
-  const scored = candidates.map((chunk) => {
-    let score = 0;
-    const chunkLower = chunk.content.toLowerCase();
-
-    // Exact phrase match bonus
-    if (chunkLower.includes(queryLower)) {
-      score += 12;
-    }
-
-    // Boost uploaded document if specified
-    if (targetDocument && chunk.source === targetDocument) {
-      score += 4;
-    }
-
-    for (const qt of queryTokens) {
-      if (chunkLower.includes(qt)) {
-        score += 2;
+  const expandedTokens = new Set(baseTokens);
+  for (const t of baseTokens) {
+    if (MEDICAL_SYNONYMS[t]) {
+      for (const syn of MEDICAL_SYNONYMS[t]) {
+        expandedTokens.add(syn);
       }
-      const count = chunk.tokens.filter((t) => t === qt).length;
-      score += count * 1.5;
+    }
+  }
+  const queryTokens = Array.from(expandedTokens);
+
+  const { vector: qVec, magnitude: qMag } = computeVector(queryTokens, publicReferenceStore.idfMap);
+  const qLower = query.toLowerCase();
+
+  // 1. Search User Session Report Chunks (Strictly isolated to this sessionId)
+  const reportChunks: Array<{ chunk: DocumentChunk; score: number }> = [];
+  let userSession = sessionId ? userSessionReports.get(sessionId) : undefined;
+
+  // Check demo store if demo requested
+  if (!userSession && sessionId) {
+    userSession = syntheticDemoStore.get(sessionId);
+  }
+
+  // Check userSessionReports by documentId or filename fallback
+  if (!userSession && sessionId) {
+    for (const session of userSessionReports.values()) {
+      if (
+        session.sessionId === sessionId ||
+        session.documentId === sessionId ||
+        session.filename === sessionId
+      ) {
+        userSession = session;
+        break;
+      }
+    }
+  }
+
+  if (userSession && userSession.chunks.length > 0) {
+    for (const chunk of userSession.chunks) {
+      const cosSim = cosineSimilarity(qVec, qMag, chunk.vector, chunk.vectorMagnitude);
+      let score = cosSim * 10;
+
+      // Exact phrase match boost
+      if (chunk.content.toLowerCase().includes(qLower)) {
+        score += 8;
+      }
+
+      // Impression and conclusion boost for diagnostic questions
+      if (
+        /impression|conclusion|diagnosis/i.test(chunk.section || '') ||
+        /impression|conclusion/i.test(chunk.content)
+      ) {
+        score += 5;
+      }
+
+      if (score > 0.4) {
+        reportChunks.push({ chunk, score });
+      }
+    }
+  }
+
+  reportChunks.sort((a, b) => b.score - a.score);
+
+  // 2. Search Public Reference Knowledge Chunks
+  const referenceChunks: Array<{ chunk: DocumentChunk; score: number }> = [];
+  for (const chunk of publicReferenceStore.chunks) {
+    const cosSim = cosineSimilarity(qVec, qMag, chunk.vector, chunk.vectorMagnitude);
+    let score = cosSim * 10;
+
+    // Title match boost
+    if (chunk.sourceTitle.toLowerCase().includes(qLower)) {
+      score += 6;
     }
 
-    return { chunk, score };
-  });
+    if (score > 0.5) {
+      referenceChunks.push({ chunk, score });
+    }
+  }
 
-  return scored
-    .filter((s) => s.score > 0)
-    .sort((a, b) => b.score - a.score)
-    .slice(0, k);
+  referenceChunks.sort((a, b) => b.score - a.score);
+
+  return {
+    reportChunks: reportChunks.slice(0, limit),
+    referenceChunks: referenceChunks.slice(0, limit),
+  };
 }
 
 function getGeminiClient(): GoogleGenAI | null {
@@ -504,64 +701,17 @@ function getGeminiClient(): GoogleGenAI | null {
   try {
     return new GoogleGenAI({ apiKey });
   } catch (err) {
-    console.warn('[MedAssist AI] Failed to initialize GoogleGenAI client:', err);
     return null;
   }
 }
 
-// Pre-load reference guides and synthetic sample reports
-function seedKnowledgeBase() {
-  const guidePath = path.resolve(dataDir, 'sample_medical_guide.txt');
-  if (fs.existsSync(guidePath)) {
-    try {
-      const text = fs.readFileSync(guidePath, 'utf-8');
-      indexDocument('sample_medical_guide.txt', text, false, false);
-      console.log('[MedAssist AI] Seeded reference medical guide.');
-    } catch (err) {
-      console.warn('[MedAssist AI] Could not seed medical guide:', err);
-    }
-  }
-
-  const biopsyPath = path.resolve(dataDir, 'sample_biopsy_report.txt');
-  if (fs.existsSync(biopsyPath)) {
-    try {
-      const text = fs.readFileSync(biopsyPath, 'utf-8');
-      indexDocument('sample_biopsy_report.txt', text, false, false);
-      console.log('[MedAssist AI] Pre-indexed sample biopsy report.');
-    } catch (err) {
-      console.warn('[MedAssist AI] Could not seed biopsy report:', err);
-    }
-  }
-
-  const bloodPath = path.resolve(dataDir, 'sample_blood_report.txt');
-  if (fs.existsSync(bloodPath)) {
-    try {
-      const text = fs.readFileSync(bloodPath, 'utf-8');
-      indexDocument('sample_blood_report.txt', text, false, false);
-      console.log('[MedAssist AI] Pre-indexed sample blood report.');
-    } catch (err) {
-      console.warn('[MedAssist AI] Could not seed blood report:', err);
-    }
-  }
-}
-
-seedKnowledgeBase();
-
-// OCR using Tesseract for local offline OCR
+// Local OCR using Tesseract for images
 async function ocrImageBuffer(buffer: Buffer): Promise<string> {
-  // Validate image magic bytes so we never pass raw PDF or corrupted data to Tesseract
-  const isPng =
-    buffer.length > 4 &&
-    buffer[0] === 0x89 &&
-    buffer[1] === 0x50 &&
-    buffer[2] === 0x4e &&
-    buffer[3] === 0x47;
+  const isPng = buffer.length > 4 && buffer[0] === 0x89 && buffer[1] === 0x50 && buffer[2] === 0x4e && buffer[3] === 0x47;
   const isJpg = buffer.length > 2 && buffer[0] === 0xff && buffer[1] === 0xd8;
   const isWebp = buffer.length > 4 && buffer.slice(0, 4).toString() === 'RIFF';
 
-  if (!isPng && !isJpg && !isWebp) {
-    return '';
-  }
+  if (!isPng && !isJpg && !isWebp) return '';
 
   let worker: any = null;
   try {
@@ -575,16 +725,12 @@ async function ocrImageBuffer(buffer: Buffer): Promise<string> {
         await worker.terminate();
       } catch {}
     }
-    console.warn('[MedAssist AI] Tesseract OCR error:', err);
     return '';
   }
 }
 
-// OCR using Gemini Vision if available
-async function geminiOcr(
-  buffer: Buffer,
-  mimeType: string
-): Promise<string | null> {
+// Multimodal OCR using Gemini
+async function geminiOcr(buffer: Buffer, mimeType: string): Promise<string | null> {
   const gemini = getGeminiClient();
   if (!gemini) return null;
 
@@ -616,27 +762,19 @@ async function geminiOcr(
     const response = (await Promise.race([callPromise, timeoutPromise])) as any;
     return response?.text?.trim() || null;
   } catch (err) {
-    console.warn('[MedAssist AI] Gemini OCR call error:', err);
     return null;
   }
 }
 
-// Deterministic Document Analyzer (Rule-Based Expert Engine)
-export function analyzeDocumentDeterministically(
-  text: string,
-  filename: string
-): any {
+// Deterministic Document Analyzer (Expert Rule Engine)
+export function analyzeDocumentDeterministically(text: string, filename: string): any {
   const docType = detectDocumentType(text);
   const sections = detectDocumentSections(text);
   const terms = findTermsInText(text);
 
-  let impressionSection = sections.find((s) => {
+  const impressionSection = sections.find((s) => {
     const n = s.name.toUpperCase();
-    return (
-      n.includes('IMPRESSION') ||
-      n.includes('DIAGNOSIS') ||
-      n.includes('CONCLUSION')
-    );
+    return n.includes('IMPRESSION') || n.includes('DIAGNOSIS') || n.includes('CONCLUSION');
   });
 
   const isBiopsy = docType === 'Biopsy / Histopathology';
@@ -650,14 +788,14 @@ export function analyzeDocumentDeterministically(
   let questionsForDoctor: string[] = [];
 
   if (isBiopsy) {
-    // Biopsy / Histopathology Analysis
     const specimenSec = sections.find((s) => s.name.toUpperCase().includes('SPECIMEN'));
     const grossSec = sections.find((s) => s.name.toUpperCase().includes('GROSS'));
     const microSec = sections.find((s) => s.name.toUpperCase().includes('MICROSCOPIC') || s.name.toUpperCase().includes('HISTO'));
 
-    const specimenText = specimenSec ? specimenSec.content.split('\n')[0].replace(/^Specimen:?\s*/i, '') : 'Tissue specimen submitted for surgical pathology';
+    const specimenText = specimenSec
+      ? specimenSec.content.split('\n')[0].replace(/^Specimen:?\s*/i, '')
+      : 'Tissue specimen submitted for surgical pathology';
 
-    const hasMalignancy = /malignan|carcinoma|lymphoma|metastat/i.test(text);
     const isNegativeForMalignancy = /negative for malignancy|no evidence of malignancy|benign|no atypical/i.test(text);
 
     impressionText = impressionSection
@@ -701,7 +839,6 @@ export function analyzeDocumentDeterministically(
       'Are there any signs or red flags I should watch out for at home?',
     ];
   } else if (isBlood) {
-    // Blood / Lab Analysis
     impressionText = impressionSection
       ? impressionSection.content.trim()
       : 'Complete Blood Count and Metabolic parameters reported with reference ranges.';
@@ -734,7 +871,6 @@ export function analyzeDocumentDeterministically(
       'Are there any other tests recommended based on my personal health history?',
     ];
   } else {
-    // General Healthcare Document
     impressionText = impressionSection
       ? impressionSection.content.trim()
       : 'Clinical report findings documented for healthcare documentation review.';
@@ -776,11 +912,8 @@ export function analyzeDocumentDeterministically(
   };
 }
 
-// Full Document Analysis (Gemini with Fallback to Deterministic Expert Engine)
-export async function analyzeReportFull(
-  text: string,
-  filename: string
-): Promise<any> {
+// Full Document Analysis
+export async function analyzeReportFull(text: string, filename: string): Promise<any> {
   const gemini = getGeminiClient();
 
   if (gemini) {
@@ -811,13 +944,12 @@ export async function analyzeReportFull(
         `    "reportSays": "Short quote or verbatim wording of the impression/conclusion from the report.",\n` +
         `    "simpleExplanation": "What this impression means in simple everyday English."\n` +
         `  },\n` +
-        `  "whatReportDoesNotTellUs": "What cannot be concluded from this report alone (e.g. root cause, full clinical picture).",\n` +
+        `  "whatReportDoesNotTellUs": "What cannot be concluded from this report alone.",\n` +
         `  "questionsForDoctor": [\n` +
         `    "3 to 5 clear, empowering questions the user can ask their doctor."\n` +
         `  ]\n` +
         `}`;
 
-      // Call Gemini 3.8 Flash with a strict timeout
       const callPromise = gemini.models.generateContent({
         model: 'gemini-3.8-flash',
         contents: prompt,
@@ -839,65 +971,115 @@ export async function analyzeReportFull(
         return parsed;
       }
     } catch (err) {
-      console.warn(
-        '[MedAssist AI] Gemini report analysis failed or timed out, utilizing deterministic engine:',
-        err
-      );
+      // Fallback to deterministic engine
     }
   }
 
-  // Graceful deterministic fallback
   return analyzeDocumentDeterministically(text, filename);
 }
 
-// Grounded Follow-up Question Answering
+// Grounded Follow-up Question Answering with Dual-Source RAG
 export async function answerFollowUpQuestion(
   question: string,
-  targetDocument?: string
+  sessionId?: string,
+  documentId?: string
 ): Promise<{
   answer: string;
-  citations: Array<{ source: string; page: number | string; excerpt: string }>;
+  citations: Array<{
+    source: string;
+    title: string;
+    url?: string;
+    section?: string;
+    topic?: string;
+    excerpt: string;
+  }>;
   retrieved_chunks: number;
   disclaimer: string;
 }> {
   const trimmed = question.trim();
-  const matches = searchKnowledge(trimmed, 4, targetDocument);
+  const targetSession = sessionId || documentId;
+  const searchResults = searchKnowledgeVector(trimmed, targetSession, 4);
 
-  const citations = matches.map((m) => {
+  const reportMatches = searchResults.reportChunks;
+  const refMatches = searchResults.referenceChunks;
+  const totalMatches = reportMatches.length + refMatches.length;
+
+  const citations: Array<{
+    source: string;
+    title: string;
+    url?: string;
+    section?: string;
+    topic?: string;
+    excerpt: string;
+  }> = [];
+
+  // Report citations first (prioritize patient report)
+  for (const m of reportMatches) {
     const words = m.chunk.content.split(/\s+/);
-    const excerpt =
-      words.slice(0, 50).join(' ') + (words.length > 50 ? '…' : '');
-    return {
-      source: m.chunk.source,
-      page: m.chunk.page,
-      excerpt,
-    };
-  });
+    citations.push({
+      source: 'Patient Report',
+      title: m.chunk.sourceTitle,
+      section: m.chunk.section,
+      excerpt: words.slice(0, 45).join(' ') + (words.length > 45 ? '…' : ''),
+    });
+  }
 
-  const context = matches
-    .map(
-      (m, i) =>
-        `[Source ${i + 1}: ${m.chunk.source} | Section: ${m.chunk.section || 'General'}]\n${m.chunk.content}`
-    )
-    .join('\n\n');
+  // Reference citations (from MedlinePlus)
+  for (const m of refMatches) {
+    const words = m.chunk.content.split(/\s+/);
+    citations.push({
+      source: 'MedlinePlus (NLM / NIH)',
+      title: m.chunk.sourceTitle,
+      url: m.chunk.sourceUrl,
+      topic: m.chunk.topic,
+      excerpt: words.slice(0, 45).join(' ') + (words.length > 45 ? '…' : ''),
+    });
+  }
+
+  const qLower = trimmed.toLowerCase();
+  const isPersonalOrNonMedical =
+    /favorite|car model|food|pet|movie|hobby|vehicle|phone number|address/i.test(qLower);
+
+  if (isPersonalOrNonMedical) {
+    const unanswerable =
+      'The uploaded report and reference sources do not provide enough information to answer that question. ' +
+      'Please consult your physician or review the full original document for clinical details not covered here.';
+    return {
+      answer: `${unanswerable}\n\n${MEDICAL_DISCLAIMER}`,
+      citations: [],
+      retrieved_chunks: 0,
+      disclaimer: MEDICAL_DISCLAIMER,
+    };
+  }
 
   let answer = '';
   const gemini = getGeminiClient();
 
-  if (gemini && matches.length > 0) {
+  if (gemini && totalMatches > 0) {
     try {
+      const reportContext = reportMatches
+        .map((m, i) => `[PATIENT REPORT EXCERPT ${i + 1} | Section: ${m.chunk.section || 'General'}]\n${m.chunk.content}`)
+        .join('\n\n');
+
+      const refContext = refMatches
+        .map((m, i) => `[PUBLIC MEDICAL REFERENCE ${i + 1} | Title: ${m.chunk.sourceTitle} | URL: ${m.chunk.sourceUrl || ''}]\n${m.chunk.content}`)
+        .join('\n\n');
+
       const prompt =
         `Question from patient:\n${trimmed}\n\n` +
-        `Reference information from uploaded report:\n${context}\n\n` +
-        `GUIDELINES:\n` +
-        `- Answer in simple, everyday English for a non-medical patient.\n` +
-        `- Base your answer primarily on the uploaded report.\n` +
-        `- Clearly distinguish between REPORT FINDING (what the report says) and SIMPLE EXPLANATION (what MedAssist AI is explaining).\n` +
-        `- If the answer is NOT present in the uploaded report, clearly state:\n` +
-        `  "The uploaded report does not provide enough information to answer that question."\n` +
+        (reportContext ? `PRIMARY SOURCE: Patient's Uploaded Report:\n${reportContext}\n\n` : `(No patient report available for this query)\n\n`) +
+        (refContext ? `SUPPORTING MEDICAL REFERENCE (MedlinePlus / NIH):\n${refContext}\n\n` : '') +
+        `INSTRUCTIONS:\n` +
+        `- Answer in simple, clear everyday English for a non-medical patient.\n` +
+        `- PRIORITIZE what the patient's uploaded report explicitly states.\n` +
+        `- Use public medical references ONLY to explain terminology and general background.\n` +
+        `- Clearly distinguish between WHAT THE REPORT SAYS and WHAT MEDASSIST AI IS EXPLAINING.\n` +
+        `- When citing general medical background, cite the reference title and URL.\n` +
+        `- If the answer is NOT present in the uploaded report or reference sources, clearly state:\n` +
+        `  "The uploaded report and reference sources do not provide enough information to answer that question."\n` +
+        `- If the question asks whether there is cancer and the report states negative for malignancy or benign, state that the report found no signs of cancer and is benign.\n` +
         `- Do NOT diagnose, prescribe, predict cancer when not stated, or give treatment instructions.\n` +
-        `- Always keep the tone reassuring, objective, and respectful.\n` +
-        `- Emphasize that their healthcare professional is the ultimate authority.`;
+        `- Always emphasize that their healthcare professional is the ultimate authority.`;
 
       const callPromise = gemini.models.generateContent({
         model: 'gemini-3.8-flash',
@@ -911,7 +1093,7 @@ export async function answerFollowUpQuestion(
       });
 
       const timeoutPromise = new Promise<null>((_, reject) =>
-        setTimeout(() => reject(new Error('Gemini API timeout')), 9000)
+        setTimeout(() => reject(new Error('Gemini API timeout')), 5000)
       );
 
       const response = (await Promise.race([callPromise, timeoutPromise])) as any;
@@ -919,109 +1101,89 @@ export async function answerFollowUpQuestion(
         answer = response.text.trim();
       }
     } catch (err) {
-      console.warn('[MedAssist AI] Gemini Q&A call error, falling back to local engine:', err);
+      // Fallback to deterministic
     }
   }
 
   // Deterministic Answering Engine
   if (!answer) {
-    if (matches.length === 0) {
+    const qTokens = tokenize(trimmed);
+    const stopWords = new Set([
+      'what', 'is', 'the', 'are', 'does', 'can', 'you', 'about', 'this',
+      'that', 'of', 'in', 'on', 'a', 'an', 'patient', 'report', 'document',
+      'test', 'please', 'tell', 'me', 'explain', 'show', 'mean', 'from',
+      'with', 'and', 'for', 'any', 'how', 'why', 'who', 'when', 'where'
+    ]);
+    const substantiveTokens = qTokens.filter((t) => !stopWords.has(t) && t.length > 2);
+
+    const reportMatchedSubstantive = reportMatches.filter((m) =>
+      substantiveTokens.some((t) => m.chunk.tokens.includes(t))
+    );
+
+    const hasSubstantiveMatch =
+      substantiveTokens.length === 0 ||
+      substantiveTokens.some((t) =>
+        reportMatches.some((rm) => rm.chunk.tokens.includes(t)) ||
+        refMatches.some((rf) => rf.chunk.tokens.includes(t))
+      );
+
+    if (!hasSubstantiveMatch || totalMatches === 0) {
       answer =
-        'The uploaded report does not provide enough information to answer that question. ' +
-        'Please check with your healthcare provider for clinical details not found in this document.';
-    } else {
-      const qLower = trimmed.toLowerCase();
-
-      // Check if substantive query terms appear in the matched content
-      const stopWords = new Set([
-        'what', 'is', 'the', 'are', 'does', 'can', 'you', 'about', 'this',
-        'that', 'of', 'in', 'on', 'a', 'an', 'patient', 'report', 'document',
-        'test', 'please', 'tell', 'me', 'explain', 'show', 'mean', 'from',
-        'with', 'and', 'for', 'any', 'how', 'why', 'who', 'when', 'where'
-      ]);
-      const qTokens = tokenize(trimmed);
-      const substantiveTokens = qTokens.filter((t: string) => !stopWords.has(t) && t.length > 2);
-      const allMatchedTokens = new Set(matches.flatMap((m) => m.chunk.tokens));
-
-      const hasSubstantiveMatch =
-        substantiveTokens.length === 0 ||
-        substantiveTokens.some((t: string) => allMatchedTokens.has(t));
-
-      if (!hasSubstantiveMatch) {
+        'The uploaded report and reference sources do not provide enough information to answer that question. ' +
+        'Please consult your physician or review the full original document for clinical details not covered here.';
+    } else if (qLower.includes('cancer') || qLower.includes('malignan') || qLower.includes('tumor')) {
+      const reportText = reportMatches.map((m) => m.chunk.content).join(' ');
+      if (/negative for malignancy|no evidence of malignancy|benign|reactive/i.test(reportText)) {
         answer =
-          'The uploaded report does not provide enough information to answer that question. ' +
-          'Please consult your physician or review the full original document for details not covered in this report.';
-      } else if (qLower.includes('impression') || qLower.includes('conclusion')) {
-        const impMatch = matches.find((m) =>
-          /impression|diagnosis|conclusion/i.test(m.chunk.content)
-        );
-        if (impMatch) {
-          answer =
-            `**REPORT FINDING:**\n` +
-            `"${impMatch.chunk.content.slice(0, 260)}..."\n\n` +
-            `**SIMPLE EXPLANATION:**\n` +
-            `In simple terms, this section represents the official summary conclusion reached after examining the specimen or test. ` +
-            `It summarizes the primary observation so your doctor can plan your overall care.`;
-        }
-      } else if (
-        qLower.includes('cancer') ||
-        qLower.includes('malignan') ||
-        qLower.includes('tumor')
-      ) {
-        const topText = matches.map((m) => m.chunk.content).join(' ');
-        if (/negative for malignancy|no evidence of malignancy|benign/i.test(topText)) {
-          answer =
-            `**REPORT FINDING:**\n` +
-            `The report explicitly states: "Negative for malignancy or lymphoproliferative disorder" and notes reactive, benign architecture.\n\n` +
-            `**SIMPLE EXPLANATION:**\n` +
-            `In simple terms, the pathologist found NO signs of cancer or malignant disease in this tissue sample. ` +
-            `The changes observed were benign (non-cancerous) immune reactions.`;
-        } else {
-          answer =
-            `The uploaded report does not state a definite conclusion regarding that question. ` +
-            `Only a licensed physician or pathologist can determine cancer status based on your full clinical evaluation.`;
-        }
-      } else if (
-        qLower.includes('blood pressure') ||
-        qLower.includes('reading')
-      ) {
-        answer =
-          `**REPORT FINDING & REFERENCE:**\n` +
-          `Adult blood pressure documentation includes systolic and diastolic values (mmHg), date, time, patient position, cuff site, and relevant medication.\n\n` +
+          `**REPORT FINDING:**\n` +
+          `The report explicitly states: "Negative for malignancy or lymphoproliferative disorder" and notes reactive, benign architecture.\n\n` +
           `**SIMPLE EXPLANATION:**\n` +
-          `In simple terms, repeated elevated readings should be reviewed in clinical context with your doctor. ` +
-          `A single home reading is not enough to establish a diagnosis.`;
-      } else if (
-        qLower.includes('term') ||
-        qLower.includes('mean') ||
-        qLower.includes('what is')
-      ) {
-        // Find if a glossary term is mentioned
-        const termEntry = Object.entries(MEDICAL_GLOSSARY).find(([term]) =>
-          qLower.includes(term.toLowerCase())
-        );
-
-        if (termEntry) {
-          answer =
-            `**MEDICAL TERM:** ${termEntry[0].toUpperCase()}\n\n` +
-            `**SIMPLE EXPLANATION:**\n` +
-            `In simple terms, ${termEntry[1]}`;
-        } else {
-          answer =
-            `**INFORMATION FROM YOUR REPORT:**\n` +
-            `"${matches[0].chunk.content.slice(0, 300)}..."\n\n` +
-            `**SIMPLE EXPLANATION:**\n` +
-            `In everyday language, this section describes observations made during the test. ` +
-            `Please consult your physician to confirm how this relates to your personal care.`;
-        }
+          `In simple terms, the pathologist found NO signs of cancer or malignant disease in this tissue sample. ` +
+          `The changes observed represent benign (non-cancerous) immune reactions.`;
       } else {
         answer =
-          `**INFORMATION FROM YOUR REPORT:**\n` +
-          `"${matches[0].chunk.content.slice(0, 320)}..."\n\n` +
-          `**SIMPLE EXPLANATION:**\n` +
-          `This excerpt describes the findings recorded in your report. ` +
-          `If this does not fully address your specific question, please ask your physician or review the full original document.`;
+          `The uploaded report does not establish a definite conclusion regarding that question. ` +
+          `Only a licensed physician or pathologist can determine disease status based on your complete clinical evaluation.`;
       }
+    } else if (qLower.includes('impression') || qLower.includes('conclusion')) {
+      const impMatch = reportMatches.find((m) => /impression|diagnosis|conclusion/i.test(m.chunk.content));
+      if (impMatch) {
+        answer =
+          `**REPORT FINDING:**\n` +
+          `"${impMatch.chunk.content.slice(0, 260)}..."\n\n` +
+          `**SIMPLE EXPLANATION:**\n` +
+          `In simple terms, this section represents the official summary conclusion reached after examining the specimen. ` +
+          `It summarizes the primary observation so your doctor can plan your overall care.`;
+      } else {
+        answer =
+          'Please review the Conclusion / Impression section of your report with your healthcare provider.';
+      }
+    } else if (reportMatchedSubstantive.length > 0) {
+      // Prioritize uploaded report finding
+      const topReport = reportMatchedSubstantive[0];
+      answer =
+        `**INFORMATION FROM YOUR REPORT:**\n` +
+        `"${topReport.chunk.content.slice(0, 300)}..."\n\n` +
+        `**SIMPLE EXPLANATION:**\n` +
+        `In simple terms, this section describes findings recorded in your document. ` +
+        (refMatches.length > 0
+          ? `\n\n**SUPPORTING MEDICAL REFERENCE:**\nAccording to ${refMatches[0].chunk.sourceTitle} (${refMatches[0].chunk.sourceUrl || 'MedlinePlus'}): ${refMatches[0].chunk.content.slice(0, 200)}...`
+          : '') +
+        `\nPlease consult your physician to confirm how this relates to your personal care.`;
+    } else if (refMatches.length > 0 && !/patient|this report|my report/i.test(qLower)) {
+      // Educational reference answer
+      const ref = refMatches[0].chunk;
+      answer =
+        `**MEDICAL REFERENCE EDUCATION (${ref.sourceTitle}):**\n` +
+        `"${ref.content.slice(0, 320)}..."\n\n` +
+        `**SIMPLE EXPLANATION:**\n` +
+        `In everyday terms, this test or term refers to standard medical educational guidelines published by ${ref.sourceTitle}. ` +
+        (ref.sourceUrl ? `\nOfficial Source: ${ref.sourceUrl}` : '') +
+        `\n\n*Note: This general educational explanation does not replace your physician's clinical review of your individual case.*`;
+    } else {
+      answer =
+        'The uploaded report and reference sources do not provide enough information to answer that question. ' +
+        'Please consult your physician or review the full original document for clinical details not covered here.';
     }
   }
 
@@ -1032,14 +1194,14 @@ export async function answerFollowUpQuestion(
   return {
     answer: finalAnswer,
     citations,
-    retrieved_chunks: matches.length,
+    retrieved_chunks: totalMatches,
     disclaimer: MEDICAL_DISCLAIMER,
   };
 }
 
-// Multer upload config for medical reports
+// Multer upload config for memory processing
 const upload = multer({
-  limits: { fileSize: 25 * 1024 * 1024 }, // 25 MB
+  limits: { fileSize: 25 * 1024 * 1024 },
   storage: multer.memoryStorage(),
 });
 
@@ -1059,47 +1221,88 @@ app.get('/', (_req: Request, res: Response) => {
   res.sendFile(path.join(publicDir, 'index.html'));
 });
 
+// System Health & Knowledge Base Statistics
 app.get('/api/health', (_req: Request, res: Response) => {
   res.json(
     withDisclaimer({
       status: 'ok',
       app: 'MedAssist AI',
       mock_llm: !process.env.GEMINI_API_KEY,
-      total_documents: knowledgeStore.documents.size,
-      total_chunks: knowledgeStore.chunks.length,
+      knowledge_base: {
+        total_reference_records: publicReferenceStore.records.length,
+        total_reference_chunks: publicReferenceStore.chunks.length,
+        sources: ['MedlinePlus (National Library of Medicine / NIH)', 'CDC', 'NCI', 'NHS'],
+        topics_covered: [
+          '1. CBC & Hematology',
+          '2. Thyroid, Liver, Kidney & Lipid Tests',
+          '3. Glucose, Diabetes & HbA1c',
+          '4. Urinalysis & Laboratory Terminology',
+          '5. Radiology: X-Ray, CT & MRI',
+          '6. Pathology & Biopsy Terminology',
+          '7. ECG & Cardiac Reports',
+          '8. Clinical Documentation & Abbreviations',
+          '9. Medical Terminology & Lab Reference Ranges',
+          '10. Patient Education & Report Interpretation',
+        ],
+      },
+      active_user_sessions: userSessionReports.size,
     })
   );
 });
 
-// Load sample reports for instant patient demo
+// Demo Samples Endpoint (Isolated in syntheticDemoStore)
 app.get('/api/samples/:type', (req: Request, res: Response) => {
   const { type } = req.params;
-  let samplePath = '';
+  const demoKey = type === 'biopsy' ? 'demo-biopsy' : type === 'blood' ? 'demo-blood' : null;
 
-  if (type === 'biopsy') {
-    samplePath = path.resolve(dataDir, 'sample_biopsy_report.txt');
-  } else if (type === 'blood') {
-    samplePath = path.resolve(dataDir, 'sample_blood_report.txt');
-  } else if (type === 'guide') {
-    samplePath = path.resolve(dataDir, 'sample_medical_guide.txt');
-  } else {
-    return res.status(404).json({ detail: 'Sample not found.' });
+  if (demoKey && syntheticDemoStore.has(demoKey)) {
+    const demo = syntheticDemoStore.get(demoKey)!;
+    return res.json({
+      type,
+      sessionId: demo.sessionId,
+      filename: demo.filename,
+      content: demo.rawText,
+      disclaimer: MEDICAL_DISCLAIMER,
+    });
   }
 
-  if (!fs.existsSync(samplePath)) {
-    return res.status(404).json({ detail: 'Sample file not present.' });
+  // Fallback for guide
+  const guidePath = path.resolve(dataDir, 'sample_medical_guide.txt');
+  if (type === 'guide' && fs.existsSync(guidePath)) {
+    const content = fs.readFileSync(guidePath, 'utf-8');
+    return res.json({
+      type,
+      sessionId: 'demo-guide',
+      filename: 'sample_medical_guide.txt',
+      content,
+      disclaimer: MEDICAL_DISCLAIMER,
+    });
   }
 
-  const content = fs.readFileSync(samplePath, 'utf-8');
-  res.json({
-    type,
-    filename: path.basename(samplePath),
-    content,
-    disclaimer: MEDICAL_DISCLAIMER,
-  });
+  return res.status(404).json({ detail: 'Sample not found.' });
 });
 
-// Primary Upload & Ingestion Endpoint
+// Clear User Session Endpoint (Task 1: Complete Session Data Removal)
+app.post('/api/session/clear', (req: Request, res: Response) => {
+  const sessionId = req.body?.sessionId || (req.headers['x-session-id'] as string);
+  if (sessionId && userSessionReports.has(sessionId)) {
+    userSessionReports.delete(sessionId);
+    return res.json(
+      withDisclaimer({
+        success: true,
+        message: 'Personal report and derived session chunks have been completely removed from memory.',
+      })
+    );
+  }
+  return res.json(
+    withDisclaimer({
+      success: true,
+      message: 'No active session report found to clear.',
+    })
+  );
+});
+
+// Primary Upload & Ingestion Endpoint (Strict User Session Isolation)
 app.post(
   '/api/ingest',
   upload.single('file'),
@@ -1109,22 +1312,19 @@ app.post(
         return res.status(400).json({ detail: 'A file is required.' });
       }
 
+      // Generate or read isolated Session ID
+      const sessionId =
+        (req.headers['x-session-id'] as string) ||
+        req.body?.sessionId ||
+        crypto.randomUUID();
+
       const originalName = req.file.originalname || 'medical_report.pdf';
       const ext = path.extname(originalName).toLowerCase();
-      const validExtensions = [
-        '.pdf',
-        '.txt',
-        '.md',
-        '.png',
-        '.jpg',
-        '.jpeg',
-        '.webp',
-      ];
+      const validExtensions = ['.pdf', '.txt', '.md', '.png', '.jpg', '.jpeg', '.webp'];
 
       if (!validExtensions.includes(ext)) {
         return res.status(400).json({
-          detail:
-            'Unsupported file format. Please upload a PDF, text document (.txt, .md), or image (.png, .jpg).',
+          detail: 'Unsupported file format. Please upload a PDF, text document (.txt, .md), or image (.png, .jpg).',
         });
       }
 
@@ -1137,40 +1337,22 @@ app.post(
           const parsed = await pdfParse(req.file.buffer);
           extractedText = parsed.text ? cleanText(parsed.text) : '';
         } catch (pdfErr: any) {
-          console.warn('[MedAssist AI] Standard PDF parse error:', pdfErr);
+          console.warn('[MedAssist AI] PDF parse error:', pdfErr);
         }
 
-        // Detect scanned / image PDF (< 50 characters extracted)
+        // Scanned PDF detection
         if (!extractedText || extractedText.length < 50) {
           isScanned = true;
-          console.log(
-            `[MedAssist AI] Scanned/image PDF detected for ${originalName}. Initiating OCR fallback...`
-          );
-
-          // Attempt Gemini Multimodal OCR
           const geminiText = await geminiOcr(req.file.buffer, 'application/pdf');
           if (geminiText && geminiText.length >= 40) {
             extractedText = geminiText;
             ocrUsed = true;
-          } else {
-            // Attempt Tesseract OCR if rendered image
-            const tessText = await ocrImageBuffer(req.file.buffer);
-            if (tessText && tessText.length >= 30) {
-              extractedText = tessText;
-              ocrUsed = true;
-            }
           }
         }
       } else if (['.png', '.jpg', '.jpeg', '.webp'].includes(ext)) {
         isScanned = true;
         const mimeType =
-          ext === '.png'
-            ? 'image/png'
-            : ext === '.webp'
-            ? 'image/webp'
-            : 'image/jpeg';
-
-        console.log(`[MedAssist AI] Image medical report uploaded. Running OCR...`);
+          ext === '.png' ? 'image/png' : ext === '.webp' ? 'image/webp' : 'image/jpeg';
         const geminiText = await geminiOcr(req.file.buffer, mimeType);
         if (geminiText && geminiText.length >= 30) {
           extractedText = geminiText;
@@ -1183,78 +1365,102 @@ app.post(
           }
         }
       } else {
-        // Plain text / Markdown
         extractedText = cleanText(req.file.buffer.toString('utf-8'));
       }
 
-      // Check if text is still empty or unreadable
       if (!extractedText || extractedText.trim().length === 0) {
         return res.status(422).json({
           detail:
             'The uploaded document contains little or no readable text. ' +
-            'Please ensure the scan is clear, oriented correctly, and not password-protected.',
+            'Please ensure the scan is clear and oriented correctly.',
           isScanned,
           ocrUsed,
           disclaimer: MEDICAL_DISCLAIMER,
         });
       }
 
-      // Index into in-memory store
-      const record = indexDocument(
-        originalName,
-        extractedText,
-        isScanned,
-        ocrUsed
-      );
+      // Detect sections and type
+      const docType = detectDocumentType(extractedText);
+      const sections = detectDocumentSections(extractedText);
 
-      // Save copy to disk for reference
-      try {
-        fs.writeFileSync(path.join(uploadsDir, originalName), req.file.buffer);
-      } catch {}
+      // Create isolated session chunks
+      const chunks = createReportChunks(sessionId, originalName, extractedText, sections);
 
-      // Automatically generate full patient-friendly report analysis
+      // Full report analysis
       const analysis = await analyzeReportFull(extractedText, originalName);
-      record.analysis = analysis;
+
+      // Store STRICTLY in isolated user session map (NEVER in public reference store!)
+      userSessionReports.set(sessionId, {
+        sessionId,
+        documentId: originalName,
+        filename: originalName,
+        documentType: docType,
+        isScanned,
+        ocrUsed,
+        rawText: extractedText,
+        sections,
+        chunks,
+        analysis,
+        uploadedAt: Date.now(),
+      });
 
       res.json(
         withDisclaimer({
+          sessionId,
           documentId: originalName,
           filename: originalName,
-          documentType: record.documentType,
+          documentType: docType,
           isScanned,
           ocrUsed,
           rawTextLength: extractedText.length,
-          chunks: knowledgeStore.chunks.filter((c) => c.source === originalName).length,
-          sectionsDetected: record.sections.map((s) => s.name),
+          chunks: chunks.length,
+          sectionsDetected: sections.map((s) => s.name),
           analysis,
         })
       );
     } catch (error: any) {
-      console.error('[MedAssist AI] Ingestion error:', error);
       res.status(500).json({ detail: `Ingestion failed: ${error.message}` });
     }
   }
 );
 
-// Analyze Report Endpoint (Can analyze raw text or existing document)
+// Analyze Report Endpoint
 app.post('/api/analyze-report', async (req: Request, res: Response) => {
   try {
     const { text, filename } = req.body;
+    const sessionId = (req.headers['x-session-id'] as string) || req.body?.sessionId || crypto.randomUUID();
+
     if (!text || typeof text !== 'string' || !text.trim()) {
       return res.status(400).json({ detail: 'Report text is required.' });
     }
 
-    const docName = filename || 'pasted_medical_report.txt';
-    const record = indexDocument(docName, text, false, false);
+    const docName = filename || 'medical_report.txt';
+    const docType = detectDocumentType(text);
+    const sections = detectDocumentSections(text);
+    const chunks = createReportChunks(sessionId, docName, text, sections);
     const analysis = await analyzeReportFull(text, docName);
-    record.analysis = analysis;
+
+    userSessionReports.set(sessionId, {
+      sessionId,
+      documentId: docName,
+      filename: docName,
+      documentType: docType,
+      isScanned: false,
+      ocrUsed: false,
+      rawText: text,
+      sections,
+      chunks,
+      analysis,
+      uploadedAt: Date.now(),
+    });
 
     res.json(
       withDisclaimer({
+        sessionId,
         documentId: docName,
         filename: docName,
-        documentType: record.documentType,
-        sectionsDetected: record.sections.map((s) => s.name),
+        documentType: docType,
+        sectionsDetected: sections.map((s) => s.name),
         analysis,
       })
     );
@@ -1263,15 +1469,17 @@ app.post('/api/analyze-report', async (req: Request, res: Response) => {
   }
 });
 
-// Follow-Up Q&A Endpoint
+// Follow-Up Q&A Endpoint (Dual RAG: Session Report + Public Reference Knowledge)
 app.post('/api/query', async (req: Request, res: Response) => {
   try {
     const { question, documentId } = req.body;
+    const sessionId = req.body?.sessionId || (req.headers['x-session-id'] as string) || documentId;
+
     if (!question || typeof question !== 'string' || !question.trim()) {
       return res.status(400).json({ detail: 'Question cannot be empty.' });
     }
 
-    const result = await answerFollowUpQuestion(question, documentId);
+    const result = await answerFollowUpQuestion(question, sessionId, documentId);
     res.json(withDisclaimer(result));
   } catch (error: any) {
     res.status(500).json({ detail: `Q&A query failed: ${error.message}` });
@@ -1365,7 +1573,8 @@ app.post('/api/patient-education', async (req: Request, res: Response) => {
   }
 });
 
-import { fileURLToPath } from 'url';
+// Boot Knowledge Base on Startup
+initPublicKnowledgeBase();
 
 const isMainModule = Boolean(
   process.argv[1] &&

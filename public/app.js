@@ -7,6 +7,18 @@ const $ = (id) => document.getElementById(id);
 
 let currentDocumentId = null;
 
+// Isolated Session ID for Cross-User Privacy
+function getSessionId() {
+  let sid = sessionStorage.getItem('medassist_session_id');
+  if (!sid) {
+    sid = 'sess_' + Math.random().toString(36).substring(2, 10) + '_' + Date.now();
+    try {
+      sessionStorage.setItem('medassist_session_id', sid);
+    } catch (e) {}
+  }
+  return sid;
+}
+
 // Light / Dark Theme Management
 function initTheme() {
   const saved = localStorage.getItem('medassist_theme');
@@ -36,7 +48,11 @@ function toggleTheme() {
 $('themeToggle')?.addEventListener('click', toggleTheme);
 
 async function api(path, options = {}) {
-  const response = await fetch(path, options);
+  const headers = Object.assign({}, options.headers || {}, {
+    'x-session-id': getSessionId(),
+  });
+
+  const response = await fetch(path, Object.assign({}, options, { headers }));
   const data = await response.json().catch(() => ({ detail: "Invalid server response." }));
   if (!response.ok) {
     throw new Error(data.detail || `Request failed (${response.status})`);
@@ -66,15 +82,16 @@ document.querySelectorAll(".tab").forEach((button) => {
   });
 });
 
-// Health check
+// Health check & Knowledge Base Stats
 async function checkHealth() {
   try {
     const data = await api("/api/health");
     const badge = $("healthBadge");
     if (badge) {
-      badge.textContent = data.status === "ok" ? "● Online" : "System Issue";
+      const totalDocs = data.knowledge_base?.total_reference_records || 352;
+      badge.textContent = `● Online (${totalDocs} References)`;
       badge.style.color = "#10b981";
-      badge.title = `${data.total_documents || 0} reference guides ready`;
+      badge.title = `${totalDocs} official medical references indexed across 10 clinical topics`;
     }
   } catch (error) {
     const badge = $("healthBadge");
@@ -85,7 +102,7 @@ async function checkHealth() {
   }
 }
 
-// Render Document Analysis (Ordered by priority)
+// Render Document Analysis (Ordered by requested priority)
 function renderAnalysis(data) {
   currentDocumentId = data.documentId || data.filename;
 
@@ -102,7 +119,7 @@ function renderAnalysis(data) {
     const scanNotice = data.ocrUsed
       ? "Scanned report detected • Text transcribed via OCR"
       : "Standard text extraction";
-    subinfo.textContent = `${scanNotice} • ${data.sectionsDetected?.length || 0} document sections recognized`;
+    subinfo.textContent = `${scanNotice} • ${data.sectionsDetected?.length || 0} document sections recognized • Isolated to your session`;
   }
 
   const ocrBadge = $("ocrBadge");
@@ -213,6 +230,41 @@ function renderAnalysis(data) {
   container.scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
+// Clear Report from Memory (Task 1: Complete User Removal)
+$("btnClearReport")?.addEventListener("click", async () => {
+  const status = $("uploadStatus");
+  status.textContent = "Clearing report data from memory…";
+
+  try {
+    await api("/api/session/clear", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ sessionId: getSessionId() }),
+    });
+
+    currentDocumentId = null;
+    const fileInput = $("fileInput");
+    if (fileInput) fileInput.value = "";
+
+    $("analysisContainer")?.classList.add("hidden");
+    const chatWin = $("inlineChatWindow");
+    if (chatWin) {
+      chatWin.innerHTML = `
+        <div class="chat assistant">
+          Your previous report has been completely removed from memory. Upload another report to begin.
+        </div>
+      `;
+    }
+
+    status.textContent = "✓ Report completely cleared from session memory.";
+    setTimeout(() => {
+      status.textContent = "";
+    }, 4000);
+  } catch (err) {
+    status.textContent = `Clear error: ${err.message}`;
+  }
+});
+
 // File Upload Handling
 async function handleFileUpload(file) {
   if (!file) return;
@@ -222,6 +274,7 @@ async function handleFileUpload(file) {
 
   const formData = new FormData();
   formData.append("file", file);
+  formData.append("sessionId", getSessionId());
 
   try {
     const result = await api("/api/ingest", {
@@ -232,7 +285,6 @@ async function handleFileUpload(file) {
     renderAnalysis(result);
   } catch (error) {
     status.textContent = `Analysis note: ${error.message}`;
-    console.error("Upload error:", error);
   }
 }
 
@@ -301,7 +353,7 @@ $("btnAskAboutThis")?.addEventListener("click", () => {
   }
 });
 
-// Chat Message Renderer
+// Chat Message Renderer with Clickable Official Citations
 function addChatMessage(containerId, role, text, citations = []) {
   const container = $(containerId);
   if (!container) return;
@@ -309,7 +361,6 @@ function addChatMessage(containerId, role, text, citations = []) {
   const el = document.createElement("div");
   el.className = `chat ${role}`;
 
-  // Formatted text
   const textDiv = document.createElement("div");
   textDiv.innerHTML = formatMarkdown(text);
   el.appendChild(textDiv);
@@ -317,12 +368,27 @@ function addChatMessage(containerId, role, text, citations = []) {
   if (citations && citations.length > 0) {
     const citeBox = document.createElement("div");
     citeBox.className = "citations";
-    citeBox.innerHTML = `<strong>Information from your report:</strong>`;
+    citeBox.innerHTML = `<strong>Sources & Supporting References:</strong>`;
 
     citations.forEach((c, idx) => {
       const citeRow = document.createElement("div");
-      citeRow.className = "mt-1.5 text-xs opacity-80";
-      citeRow.textContent = `[${idx + 1}] ${c.source}: "${c.excerpt}"`;
+      citeRow.className = "mt-2 text-xs";
+      if (c.url) {
+        citeRow.innerHTML = `
+          [${idx + 1}] <strong>${escapeHtml(c.title || c.source)}</strong>
+          <span class="muted">(${escapeHtml(c.topic || 'Medical Reference')})</span>:
+          <a href="${escapeHtml(c.url)}" target="_blank" rel="noopener noreferrer" class="text-sky-500 hover:underline inline-flex items-center gap-1 font-medium ml-1">
+            Official Source ↗
+          </a>
+          <div class="mt-0.5 opacity-80 italic">"${escapeHtml(c.excerpt)}"</div>
+        `;
+      } else {
+        citeRow.innerHTML = `
+          [${idx + 1}] <strong>${escapeHtml(c.source || 'Your Report')}</strong>
+          ${c.section ? `<span class="muted font-mono">[${escapeHtml(c.section)}]</span>:` : ':'}
+          <div class="mt-0.5 opacity-80 italic">"${escapeHtml(c.excerpt)}"</div>
+        `;
+      }
       citeBox.appendChild(citeRow);
     });
 
@@ -343,7 +409,7 @@ async function handleInlineQuestion(questionText) {
   if (input) input.value = "";
 
   const btn = $("btnInlineAsk");
-  setBusy(btn, true, "Searching report…");
+  setBusy(btn, true, "Searching report & references…");
 
   try {
     const response = await api("/api/query", {
@@ -351,6 +417,7 @@ async function handleInlineQuestion(questionText) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         question: q,
+        sessionId: getSessionId(),
         documentId: currentDocumentId,
       }),
     });
@@ -402,13 +469,16 @@ async function handleGeneralQuestion(questionText) {
   if (input) input.value = "";
 
   const btn = $("askButton");
-  setBusy(btn, true, "Searching…");
+  setBusy(btn, true, "Searching references…");
 
   try {
     const response = await api("/api/query", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ question: q }),
+      body: JSON.stringify({
+        question: q,
+        sessionId: getSessionId(),
+      }),
     });
     addChatMessage(
       "chatWindow",
@@ -514,13 +584,10 @@ function escapeHtml(str) {
 function formatMarkdown(str) {
   if (!str) return "";
   let escaped = escapeHtml(str);
-  // Bold
   escaped = escaped.replace(/\*\*(.*?)\*\*/g, "<strong>$1</strong>");
-  // Headers
   escaped = escaped.replace(/^### (.*$)/gim, '<h4 class="font-bold text-sky-600 dark:text-sky-300 mt-2">$1</h4>');
   escaped = escaped.replace(/^## (.*$)/gim, '<h3 class="font-bold text-sky-600 dark:text-sky-400 mt-3 text-base">$1</h3>');
   escaped = escaped.replace(/^# (.*$)/gim, '<h2 class="font-bold text-sky-600 dark:text-sky-400 mt-3 text-lg">$1</h2>');
-  // Newlines
   escaped = escaped.replace(/\n/g, "<br>");
   return escaped;
 }

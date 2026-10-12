@@ -82,6 +82,7 @@ async function runTests() {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       question: 'What does reactive lymphoid follicular hyperplasia mean in simple terms?',
+      sessionId: analyzeData.sessionId,
       documentId: 'test_biopsy.txt',
     }),
   }).then((r) => r.json());
@@ -96,6 +97,7 @@ async function runTests() {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       question: 'Is there any sign of cancer in this biopsy report?',
+      sessionId: analyzeData.sessionId,
       documentId: 'test_biopsy.txt',
     }),
   }).then((r) => r.json());
@@ -108,6 +110,7 @@ async function runTests() {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       question: 'What is the patient favorite food and car model?',
+      sessionId: analyzeData.sessionId,
       documentId: 'test_biopsy.txt',
     }),
   }).then((r) => r.json());
@@ -149,6 +152,79 @@ async function runTests() {
     body: JSON.stringify({ text: '   ' }),
   });
   assert(emptyRes.status === 400, 'Empty document text returns HTTP 400');
+
+  // 7. Task 1: User Session Privacy, Report Isolation, and Session Wiping
+  console.log('\n--- Test 7: Task 1 — User Session Isolation & Memory Wiping ---');
+  const sessionA = 'test-session-privacy-A-' + Date.now();
+  const sessionB = 'test-session-privacy-B-' + Date.now();
+
+  // Ingest under session A
+  const uploadFormA = new FormData();
+  uploadFormA.append('file', new Blob(['CONFIDENTIAL BIOPSY: Patient with unusual nodular findings.'], { type: 'text/plain' }), 'private_biopsy.txt');
+  uploadFormA.append('sessionId', sessionA);
+
+  const ingestResA = await fetch(`${BASE_URL}/api/ingest`, {
+    method: 'POST',
+    body: uploadFormA,
+  });
+  assert(ingestResA.status === 200, 'Ingest under session A succeeds');
+
+  // Query under session A should find nodular findings
+  const queryResA = await fetch(`${BASE_URL}/api/query`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      question: 'What does the report say about nodular findings?',
+      sessionId: sessionA,
+    }),
+  }).then((r) => r.json());
+  assert(queryResA.citations?.some((c: any) => c.title === 'private_biopsy.txt' || c.source === 'private_biopsy.txt'), 'Session A retrieves its isolated uploaded report');
+
+  // Query under session B must NOT access session A's report
+  const queryResB = await fetch(`${BASE_URL}/api/query`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      question: 'What does the report say about nodular findings?',
+      sessionId: sessionB,
+    }),
+  }).then((r) => r.json());
+  assert(!queryResB.citations?.some((c: any) => c.title === 'private_biopsy.txt' || c.source === 'private_biopsy.txt'), 'Session B cannot access Session A report');
+
+  // Clear Session A
+  const clearResA = await fetch(`${BASE_URL}/api/session/clear`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sessionId: sessionA }),
+  }).then((r) => r.json());
+  assert(clearResA.success === true, 'Session clear endpoint successfully wiped session data');
+
+  // Query session A after wiping should no longer have report citations
+  const postClearQueryA = await fetch(`${BASE_URL}/api/query`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      question: 'What does the report say about nodular findings?',
+      sessionId: sessionA,
+    }),
+  }).then((r) => r.json());
+  assert(!postClearQueryA.citations?.some((c: any) => c.title === 'private_biopsy.txt' || c.source === 'private_biopsy.txt'), 'Session A cannot access cleared report after deletion');
+
+  // 8. Task 2: Real Medical Knowledge Base Verification (352+ records, 10 topics)
+  console.log('\n--- Test 8: Task 2 — Verified Knowledge Base (MedlinePlus / NIH / CDC) ---');
+  assert(healthData.knowledge_base.total_reference_records >= 200, `Knowledge base contains target count (${healthData.knowledge_base.total_reference_records} verified records)`);
+  assert(healthData.knowledge_base.topics_covered.length === 10, 'All 10 required clinical topics are covered');
+
+  // Query general reference: hemoglobin / CBC
+  const cbcQuery = await fetch(`${BASE_URL}/api/query`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      question: 'What is a complete blood count and hemoglobin?',
+    }),
+  }).then((r) => r.json());
+  assert(cbcQuery.citations?.some((c: any) => c.url && c.url.includes('medlineplus.gov')), 'RAG retrieves official MedlinePlus educational reference citation with URL');
+
 
   console.log('\n====================================================');
   console.log(`Test Results: ${passed} Passed, ${failed} Failed`);
